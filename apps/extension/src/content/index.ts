@@ -24,7 +24,7 @@ if (!window.cfaPane) {
       pane = window.cfaPane = new Pane(send);
     }
     if (message.type === 'cfa:loading') pane.showLoading();
-    else if (message.type === 'cfa:result') pane.showResult(message.result);
+    else if (message.type === 'cfa:result') void pane.showResult(message.result);
     else if (message.type === 'cfa:error') pane.showError(message.message);
   });
 }

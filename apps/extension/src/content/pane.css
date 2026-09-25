@@ -370,3 +370,25 @@ footer details button {
   color: inherit;
   cursor: pointer;
 }
+
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dismiss {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.dismiss:hover {
+  color: var(--text);
+}

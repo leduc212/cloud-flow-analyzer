@@ -1,6 +1,15 @@
 import { getRule, label, type FindingTarget, type FlowAnalysis } from '@cfa/core';
 import type { FlowRef } from './flow-url.ts';
 
+/** One step on the way to a finding's target: its kind and which branch of its parent holds it. */
+export interface PathStep {
+  name: string;
+  /** Action kind (`scope`, `foreach`, `condition`, `switch`…) or `trigger`. */
+  kind: string;
+  /** `actions` / `else` (Condition), `case:<name>` / `default` (Switch), `actions` elsewhere. */
+  branch?: string;
+}
+
 /** One finding, with the rule's texts, ready for the in-page pane. Plain data only. */
 export interface PaneFinding {
   ruleId: string;
@@ -11,6 +20,8 @@ export interface PaneFinding {
   target: FindingTarget;
   /** Designer-style name of the target, e.g. "Get a row", or "Whole flow". */
   targetLabel: string;
+  /** The target's path with kinds and branches, to open collapsed branches in the designer. */
+  steps: PathStep[];
   message: string;
   why: string;
   fix: string;
@@ -62,6 +73,11 @@ export function buildPaneResult(
         confidence: finding.confidence,
         target: finding.target,
         targetLabel: finding.target.name ? label(finding.target.name) : 'Whole flow',
+        steps: finding.target.path.map((name): PathStep => {
+          const node = tree.byName.get(name);
+          if (!node) return { name, kind: 'trigger' };
+          return { name, kind: node.kind, ...(node.branch ? { branch: node.branch } : {}) };
+        }),
         message: finding.message,
         why: rule?.why ?? '',
         fix: finding.fix ?? rule?.fix ?? '',

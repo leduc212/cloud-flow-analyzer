@@ -5,6 +5,7 @@ import { analyseFlow } from '@cfa/core';
 import { HOST_ID, Pane } from '../src/content/pane.ts';
 import {
   actionNameOfNode,
+  branchCardIds,
   designerCheck,
   expandPath,
   findActionElement,
@@ -132,7 +133,7 @@ describe('expandPath', () => {
     });
     expect(findActionElement('Create_Non-PO_4')).toBeUndefined();
     const outcome = await expandPath(['Scope_OCR', 'Loop', 'Create_Non-PO_4']);
-    expect(outcome).toEqual({ expanded: ['Scope_OCR', 'Loop'] });
+    expect(outcome).toEqual({ expanded: ['"Scope OCR"', '"Loop"'] });
     expect(findActionElement('Create_Non-PO_4')).toBeDefined();
   });
 
@@ -142,7 +143,7 @@ describe('expandPath', () => {
       Loop: { children: ['Create_Non-PO_4'], collapsed: true },
     });
     const outcome = await expandPath(['Scope_OCR', 'Loop', 'Create_Non-PO_4']);
-    expect(outcome.expanded).toEqual(['Loop']);
+    expect(outcome.expanded).toEqual(['"Loop"']);
     expect(state.Scope_OCR?.collapsed).toBe(false);
   });
 
@@ -159,6 +160,43 @@ describe('expandPath', () => {
     expect(outcome.blockedAt).toBe('Scope');
     expect(state.Scope?.collapsed).toBe(false);
   }, 10_000);
+
+  it('opens a collapsed Switch case or Condition branch card', async () => {
+    document.body.innerHTML = `
+      <div class="react-flow">
+        <div class="react-flow__node" data-id="Switch-#scope"><button class="msla-collapse-toggle" aria-label="Collapse"></button></div>
+        <div class="react-flow__node" data-id="Case_2-#subgraph"><button class="msla-collapse-toggle" aria-label="Expand"></button></div>
+      </div>`;
+    document.querySelector('[data-id="Case_2-#subgraph"] button')!.addEventListener('click', () => {
+      const node = document.createElement('div');
+      node.className = 'react-flow__node';
+      node.dataset.id = 'Send_email';
+      document.querySelector('.react-flow')!.append(node);
+    });
+    const outcome = await expandPath(
+      ['Switch', 'Send_email'],
+      [
+        { name: 'Switch', kind: 'switch' },
+        { name: 'Send_email', kind: 'connector', branch: 'case:Case_2' },
+      ],
+    );
+    expect(outcome).toEqual({ expanded: ['case "Case 2"'] });
+  });
+
+  it('names branch cards the way the designer does', () => {
+    const condition = { name: 'Check', kind: 'condition' };
+    const sw = { name: 'Switch', kind: 'switch' };
+    expect(branchCardIds(condition, { name: 'A', kind: 'x', branch: 'actions' })[0]).toBe(
+      'Check-actions-#subgraph',
+    );
+    expect(branchCardIds(condition, { name: 'A', kind: 'x', branch: 'else' })[0]).toBe(
+      'Check-elseActions-#subgraph',
+    );
+    expect(branchCardIds(sw, { name: 'A', kind: 'x', branch: 'default' })[0]).toBe(
+      'Switch-defaultCase-#subgraph',
+    );
+    expect(branchCardIds({ name: 'S', kind: 'scope' }, { name: 'A', kind: 'x' })).toEqual([]);
+  });
 
   it('reads toggle state from aria-expanded or the label', () => {
     const toggle = document.createElement('button');

@@ -18,6 +18,8 @@ export interface RevealOptions {
   reservedRight?: number;
   /** Trigger and action names in designer order, used to find actions that aren't drawn yet. */
   order?: string[];
+  /** Kinds and branches along the path, to open Condition branches and Switch cases. */
+  steps?: Step[];
   /** Status updates while searching. */
   onProgress?: (text: string) => void;
 }
@@ -318,38 +320,106 @@ export interface ExpandOutcome {
  * Only clicks a toggle that says it is collapsed, or, when it can't tell, clicks it and undoes
  * the click if the next step doesn't appear, so expanded containers are never left collapsed.
  */
-export async function expandPath(path: string[]): Promise<ExpandOutcome> {
+/** A step on the way to an action: its kind and the branch of its parent that holds it. */
+export interface Step {
+  name: string;
+  kind: string;
+  branch?: string;
+}
+
+interface Container {
+  /** Shown in the status line, e.g. `"Scope"` or `the "No" branch of "Condition"`. */
+  label: string;
+  card: () => HTMLElement | undefined;
+}
+
+/**
+ * Condition branches and Switch cases are drawn as their own collapsible cards. The designer
+ * names them `<condition>-actions` / `<condition>-elseActions`, the case name, and
+ * `<switch>-defaultCase`, with a `-#subgraph` suffix on the card.
+ */
+export function branchCardIds(parent: Step, child: Step): string[] {
+  const branch = child.branch ?? 'actions';
+  let id: string | undefined;
+  if (parent.kind === 'condition') {
+    id = branch === 'else' ? `${parent.name}-elseActions` : `${parent.name}-actions`;
+  } else if (parent.kind === 'switch') {
+    id = branch === 'default' ? `${parent.name}-defaultCase` : branch.replace(/^case:/, '');
+  }
+  return id ? [`${id}-#subgraph`, id] : [];
+}
+
+function branchLabel(parent: Step, child: Step): string {
+  const branch = child.branch ?? 'actions';
+  if (parent.kind === 'condition') {
+    return `the "${branch === 'else' ? 'No' : 'Yes'}" branch of "${label(parent.name)}"`;
+  }
+  if (branch === 'default') return `the default case of "${label(parent.name)}"`;
+  return `case "${label(branch.replace(/^case:/, ''))}"`;
+}
+
+type OpenResult = 'shown' | 'opened' | 'already-open' | 'no-toggle' | 'failed';
+
+/** Opens one collapsible card if it says it's collapsed (or can't tell), and reports what happened. */
+async function open(card: () => HTMLElement | undefined, child: string): Promise<OpenResult> {
+  const found = card();
+  const toggle = found && findCollapseToggle(found);
+  if (!toggle) return 'no-toggle';
+  const state = toggleState(toggle);
+  if (state === 'expanded') return 'already-open';
+  toggle.click();
+  // Done when the next step is drawn, or when the toggle now says open (the next step may
+  // just be off-screen, which the canvas search handles).
+  const result = await waitFor(() => {
+    if (findActionElement(child)) return 'shown' as const;
+    const again = card();
+    const now = again && findCollapseToggle(again);
+    return state === 'collapsed' && now && toggleState(now) === 'expanded'
+      ? ('opened' as const)
+      : undefined;
+  });
+  if (result) return result;
+  if (state === 'unknown') {
+    // We may have collapsed an open container: put it back.
+    findCollapseToggle(card() ?? toggle)?.click();
+  }
+  return 'failed';
+}
+
+/**
+ * Opens the collapsed scopes, loops, conditions, branches and cases on the way to an action,
+ * outermost first. Only clicks a toggle that says it is collapsed, or, when it can't tell,
+ * clicks it and undoes the click if the next step doesn't appear, so open containers are never
+ * left collapsed.
+ */
+export async function expandPath(path: string[], steps: Step[] = []): Promise<ExpandOutcome> {
   const expanded: string[] = [];
   for (let i = 0; i < path.length - 1; i++) {
     const parent = path[i] ?? '';
     const child = path[i + 1] ?? '';
     if (findActionElement(child)) continue;
-    const card = containerCard(parent);
-    const toggle = card && findCollapseToggle(card);
-    if (!toggle) return { expanded, blockedAt: parent };
-    const state = toggleState(toggle);
-    if (state === 'expanded') return { expanded, blockedAt: parent };
-    toggle.click();
-    // Done when the next step is drawn, or when the toggle now says open (the next step may
-    // just be off-screen, which the canvas search handles).
-    const result = await waitFor(() => {
-      if (findActionElement(child)) return 'shown';
-      const again = containerCard(parent);
-      const now = again && findCollapseToggle(again);
-      return state === 'collapsed' && now && toggleState(now) === 'expanded' ? 'opened' : undefined;
-    });
-    if (result === 'opened') {
-      expanded.push(parent);
-      return { expanded };
-    }
-    if (!result) {
-      if (state === 'unknown') {
-        // We may have collapsed an open container: put it back.
-        findCollapseToggle(containerCard(parent) ?? toggle)?.click();
+    const parentStep = steps[i];
+    const childStep = steps[i + 1];
+    const containers: Container[] = [
+      { label: `"${label(parent)}"`, card: () => containerCard(parent) },
+    ];
+    if (parentStep && childStep) {
+      for (const id of branchCardIds(parentStep, childStep)) {
+        containers.push({ label: branchLabel(parentStep, childStep), card: () => nodeById(id) });
       }
-      return { expanded, blockedAt: parent };
     }
-    expanded.push(parent);
+    let shown = false;
+    for (const container of containers) {
+      const result = await open(container.card, child);
+      if (result === 'shown' || result === 'opened') expanded.push(container.label);
+      if (result === 'opened') return { expanded };
+      if (result === 'failed') return { expanded, blockedAt: parent };
+      if (result === 'shown') {
+        shown = true;
+        break;
+      }
+    }
+    if (!shown) return { expanded, blockedAt: parent };
   }
   return { expanded };
 }
@@ -394,6 +464,7 @@ const LOOK: [number, number][] = [
 async function searchCanvas(
   name: string,
   path: string[],
+  steps: Step[],
   order: string[],
   reservedRight: number,
   expanded: string[],
@@ -401,7 +472,7 @@ async function searchCanvas(
   const tryFind = async () => {
     const found = findActionElement(name);
     if (found) return found;
-    const outcome = await expandPath(path);
+    const outcome = await expandPath(path, steps);
     for (const e of outcome.expanded) if (!expanded.includes(e)) expanded.push(e);
     return findActionElement(name);
   };
@@ -411,10 +482,18 @@ async function searchCanvas(
 
   let lastBest = '';
   let stuck = 0;
+  let lastMove: { pane: HTMLElement; dx: number; dy: number } | undefined;
   for (let step = 0; step < 40 && stuck < 8; step++) {
     const drawn = renderedNodes()
       .map((el) => ({ el, index: order.indexOf(actionNameOfNode(el.dataset.id ?? '')) }))
       .filter((n) => n.index >= 0);
+    if (drawn.length === 0 && lastMove) {
+      // Panned into empty canvas: go back and look in the next direction instead.
+      drag(lastMove.pane, -lastMove.dx, -lastMove.dy);
+      lastMove = undefined;
+      await settle();
+      continue;
+    }
     const best = drawn.reduce<(typeof drawn)[number] | undefined>(
       (a, b) => (!a || Math.abs(b.index - target) < Math.abs(a.index - target) ? b : a),
       undefined,
@@ -433,7 +512,8 @@ async function searchCanvas(
     const ahead = best.index < target ? 1 : -1;
     const [lookX, lookY] = LOOK[stuck % LOOK.length] ?? [0, 0.6];
     // Dragging moves the content: to look further down, drag the canvas up.
-    drag(canvas.pane, -lookX * area.width, -lookY * ahead * area.height);
+    lastMove = { pane: canvas.pane, dx: -lookX * area.width, dy: -lookY * ahead * area.height };
+    drag(lastMove.pane, lastMove.dx, lastMove.dy);
     await settle();
     found = await tryFind();
     if (found) return found;
@@ -461,10 +541,17 @@ export async function revealAction(
     options.onProgress?.(`Searching the designer for "${label(name)}"…`);
     const walk = path.length > 0 ? path : [name];
     if (options.order && renderedNodes().length > 0) {
-      element = await searchCanvas(name, walk, options.order, reservedRight, expanded);
+      element = await searchCanvas(
+        name,
+        walk,
+        options.steps ?? [],
+        options.order,
+        reservedRight,
+        expanded,
+      );
     } else {
       // No canvas to walk (classic designer): open collapsed parents on the page.
-      expanded = (await expandPath(walk)).expanded;
+      expanded = (await expandPath(walk, options.steps)).expanded;
       element = find();
     }
     if (!element) {
@@ -503,9 +590,7 @@ export async function revealAction(
       message: `Found "${label(name)}" but couldn't move the canvas to it. Copy the designer check below and send it to us.`,
     };
   }
-  const opened = expanded.length
-    ? ` (opened ${expanded.map((e) => `"${label(e)}"`).join(' › ')})`
-    : '';
+  const opened = expanded.length ? ` (opened ${expanded.join(' › ')})` : '';
   return { ok: true, message: `Showing "${label(name)}"${opened}.` };
 }
 

@@ -11,6 +11,7 @@
 import { analyseFlow } from '@cfa/core';
 import { createApiClient } from './api/client.ts';
 import { fetchFlow } from './api/flow-lookup.ts';
+import { friendlyError } from './shared/errors.ts';
 import { parseFlowUrl } from './shared/flow-url.ts';
 import type { BackgroundMessage, ContentMessage } from './shared/messages.ts';
 import { openExtensionPage } from './shared/open-page.ts';
@@ -94,10 +95,7 @@ async function analyseTab(tabId: number): Promise<void> {
     const flow = await fetchFlow(client, tokens, ref);
     await send(tabId, { type: 'cfa:result', result: buildPaneResult(ref, analyseFlow(flow)) });
   } catch (error) {
-    await send(tabId, {
-      type: 'cfa:error',
-      message: error instanceof Error ? error.message : String(error),
-    });
+    await send(tabId, { type: 'cfa:error', message: friendlyError(error) });
   }
 }
 

@@ -6,13 +6,33 @@ import { parseFlowUrl } from '../shared/flow-url.ts';
 import type { BackgroundMessage } from '../shared/messages.ts';
 import type { PaneFinding, PaneResult } from '../shared/pane-result.ts';
 import styles from './pane.css?raw';
+import { findingKey, markdownReport, scoreWithout } from './report.ts';
 import { designerCheck, revealAction } from './reveal.ts';
 
 export const HOST_ID = 'cfa-pane-host';
 const PANE_WIDTH = 400;
 
 type Severity = PaneFinding['severity'];
-type Filter = 'all' | Severity;
+type Filter = 'all' | Severity | 'dismissed';
+
+/** Where dismissed findings are remembered: per flow, in the browser (never shared). */
+export interface DismissalStore {
+  load(flowId: string): Promise<string[]>;
+  save(flowId: string, keys: string[]): Promise<void>;
+}
+
+export const chromeDismissalStore: DismissalStore = {
+  async load(flowId) {
+    const key = `dismissed:${flowId}`;
+    const stored = (await chrome.storage.local.get(key))[key];
+    return Array.isArray(stored) ? stored.filter((k): k is string => typeof k === 'string') : [];
+  },
+  async save(flowId, keys) {
+    const key = `dismissed:${flowId}`;
+    if (keys.length === 0) await chrome.storage.local.remove(key);
+    else await chrome.storage.local.set({ [key]: keys });
+  },
+};
 
 const SEVERITY_LABEL: Record<Severity, string> = { high: 'HIGH', medium: 'MEDIUM', low: 'LOW' };
 
@@ -28,10 +48,16 @@ export class Pane {
   private result: PaneResult | undefined;
   private filter: Filter = 'all';
   private urlTimer: ReturnType<typeof setInterval> | undefined;
+  private dismissed = new Set<string>();
   private readonly send: (message: BackgroundMessage) => void;
+  private readonly store: DismissalStore;
 
-  constructor(send: (message: BackgroundMessage) => void) {
+  constructor(
+    send: (message: BackgroundMessage) => void,
+    store: DismissalStore = chromeDismissalStore,
+  ) {
     this.send = send;
+    this.store = store;
     // A pane left over from an earlier version of the extension: replace it.
     document.getElementById(HOST_ID)?.remove();
     this.host = h('div', { id: HOST_ID });
@@ -94,13 +120,25 @@ export class Pane {
     this.body.replaceChildren(h('p', { class: 'state error' }, message));
   }
 
-  showResult(result: PaneResult): void {
+  showResult(result: PaneResult): Promise<void> {
     this.result = result;
     this.filter = 'all';
+    this.dismissed = new Set();
     this.setMinimised(false);
     this.renderHeader();
     this.renderFindings();
     this.watchUrl();
+    return this.store
+      .load(result.ref.flowId)
+      .then((keys) => {
+        if (this.result !== result) return;
+        this.dismissed = new Set(keys);
+        this.renderHeader();
+        this.renderFindings();
+      })
+      .catch(() => {
+        // Dismissals are a convenience; the pane works without them.
+      });
   }
 
   close(): void {
@@ -116,8 +154,38 @@ export class Pane {
     this.panel.hidden = minimised;
     this.tab.hidden = !minimised;
     this.tab.textContent = this.result
-      ? `Flow Analyzer · ${this.result.findings.length}`
+      ? `Flow Analyzer · ${this.openFindings().length}`
       : 'Flow Analyzer';
+  }
+
+  private openFindings(): PaneFinding[] {
+    return this.result?.findings.filter((f) => !this.dismissed.has(findingKey(f))) ?? [];
+  }
+
+  private async setDismissed(finding: PaneFinding, dismissed: boolean): Promise<void> {
+    const result = this.result;
+    if (!result) return;
+    const key = findingKey(finding);
+    if (dismissed) this.dismissed.add(key);
+    else this.dismissed.delete(key);
+    this.renderHeader();
+    this.renderFindings();
+    this.setToast(dismissed ? `Dismissed "${finding.title}".` : `Restored "${finding.title}".`);
+    try {
+      await this.store.save(result.ref.flowId, [...this.dismissed]);
+    } catch {
+      this.setToast("Couldn't save the dismissal in this browser.", true);
+    }
+  }
+
+  private async copyReport(): Promise<void> {
+    if (!this.result) return;
+    try {
+      await navigator.clipboard.writeText(markdownReport(this.result, this.dismissed));
+      this.setToast('Report copied as Markdown.');
+    } catch {
+      this.setToast("Couldn't copy to the clipboard.", true);
+    }
   }
 
   private setToast(text: string, isError = false): void {
@@ -142,6 +210,19 @@ export class Pane {
         },
         '↻',
       ),
+      result
+        ? h(
+            'button',
+            {
+              class: 'icon-button',
+              type: 'button',
+              title: 'Copy report (Markdown)',
+              'aria-label': 'Copy report',
+              onclick: () => void this.copyReport(),
+            },
+            '⧉',
+          )
+        : null,
       h(
         'button',
         {
@@ -169,8 +250,11 @@ export class Pane {
       this.header.replaceChildren(titleRow);
       return;
     }
+    const open = this.openFindings();
     const counts = { high: 0, medium: 0, low: 0 };
-    for (const f of result.findings) counts[f.severity]++;
+    for (const f of open) counts[f.severity]++;
+    const score = scoreWithout(result, this.dismissed);
+    const dismissedCount = result.findings.length - open.length;
     const chip = (filter: Filter, text: string) =>
       h(
         'button',
@@ -194,18 +278,18 @@ export class Pane {
         { class: 'summary' },
         h(
           'div',
-          { class: `grade ${result.grade}`, title: `Score ${result.overall} / 100` },
-          result.grade,
+          { class: `grade ${score.grade}`, title: `Score ${score.overall} / 100` },
+          score.grade,
         ),
         h(
           'div',
           { class: 'scores' },
           'Speed ',
-          h('b', {}, result.categories.speed),
+          h('b', {}, score.categories.speed.score),
           ' · Resources ',
-          h('b', {}, result.categories.resources),
+          h('b', {}, score.categories.resources.score),
           ' · Reliability ',
-          h('b', {}, result.categories.reliability),
+          h('b', {}, score.categories.reliability.score),
           h('br'),
           `${result.actionCount} actions · ~${result.estimate.total.toLocaleString('en-US')} per run${result.estimate.assumed ? ' (estimated)' : ''}`,
         ),
@@ -213,10 +297,11 @@ export class Pane {
       h(
         'div',
         { class: 'filters', role: 'group', 'aria-label': 'Filter by severity' },
-        chip('all', `All ${result.findings.length}`),
+        chip('all', `All ${open.length}`),
         chip('high', `High ${counts.high}`),
         chip('medium', `Medium ${counts.medium}`),
         chip('low', `Low ${counts.low}`),
+        dismissedCount > 0 ? chip('dismissed', `Dismissed ${dismissedCount}`) : null,
       ),
     );
   }
@@ -230,9 +315,15 @@ export class Pane {
       );
       return;
     }
-    const shown = result.findings.filter(
-      (f) => this.filter === 'all' || f.severity === this.filter,
-    );
+    const showDismissed = this.filter === 'dismissed';
+    const shown = result.findings.filter((f) => {
+      if (this.dismissed.has(findingKey(f)) !== showDismissed) return false;
+      return this.filter === 'all' || showDismissed || f.severity === this.filter;
+    });
+    if (shown.length === 0 && this.filter === 'all') {
+      this.body.replaceChildren(h('p', { class: 'state ok' }, 'Every finding has been dismissed.'));
+      return;
+    }
     this.body.replaceChildren(...shown.map((finding) => this.renderFinding(finding)));
   }
 
@@ -268,7 +359,24 @@ export class Pane {
         h('span', { class: 'rule' }, finding.title),
         h('span', { class: 'rule-id' }, finding.ruleId),
       ),
-      target,
+      h(
+        'div',
+        { class: 'target-row' },
+        target,
+        h(
+          'button',
+          {
+            class: 'dismiss',
+            type: 'button',
+            title: this.dismissed.has(findingKey(finding))
+              ? 'Show this finding again'
+              : 'Hide this finding and leave it out of the score',
+            onclick: () =>
+              void this.setDismissed(finding, !this.dismissed.has(findingKey(finding))),
+          },
+          this.dismissed.has(findingKey(finding)) ? 'Restore' : 'Dismiss',
+        ),
+      ),
       h('p', { class: 'message' }, finding.message),
       finding.blockedBy
         ? h('div', { class: 'blocked' }, `Fix ${finding.blockedBy.join(', ')} first.`)
@@ -300,6 +408,7 @@ export class Pane {
       const outcome = await revealAction(name, finding.target.path, {
         reservedRight: this.panel.hidden ? 0 : PANE_WIDTH,
         order: this.result?.order ?? [],
+        steps: finding.steps,
         onProgress: (text) => this.setToast(text),
       });
       this.setToast(outcome.message, !outcome.ok);

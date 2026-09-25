@@ -90,7 +90,72 @@ const HEX32 = String.raw`(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])`;
 const TOKEN = new RegExp(`(${URL_PATTERN})|(${EMAIL})|${ENV_HOST}|(${GUID})|(${HEX32})`, 'gi');
 const IDS = new RegExp(`${ENV_HOST}|(${GUID})|(${HEX32})`, 'gi');
 
-const INTERPOLATION = /@\{((?:[^{}']|'(?:[^']|'')*')*)\}/g;
+export interface Interpolation {
+  /** Index of the `@`. */
+  start: number;
+  /** Index just after the closing `}`. */
+  end: number;
+  /** The expression between the braces. */
+  inner: string;
+}
+
+/**
+ * Finds `@{…}` interpolations. Quoted strings inside (with `''` escapes) are skipped, so a `}`
+ * in a string doesn't end the expression; an unquoted `{` or an unclosed string means it isn't
+ * one. A scanner rather than a regular expression: the equivalent pattern backtracks
+ * exponentially on runs of quotes.
+ */
+export function findInterpolations(value: string): Interpolation[] {
+  const found: Interpolation[] = [];
+  let start = value.indexOf('@{');
+  while (start >= 0) {
+    let i = start + 2;
+    let end = -1;
+    while (i < value.length) {
+      const char = value[i];
+      if (char === "'") {
+        // Skip the string literal; '' is an escaped quote.
+        i += 1;
+        while (i < value.length && !(value[i] === "'" && value[i + 1] !== "'")) {
+          i += value[i] === "'" ? 2 : 1;
+        }
+        if (i >= value.length) break;
+        i += 1;
+      } else if (char === '{') {
+        break;
+      } else if (char === '}') {
+        end = i + 1;
+        break;
+      } else {
+        i += 1;
+      }
+    }
+    if (end < 0) {
+      start = value.indexOf('@{', start + 2);
+      continue;
+    }
+    found.push({ start, end, inner: value.slice(start + 2, end - 1) });
+    start = value.indexOf('@{', end);
+  }
+  return found;
+}
+
+/** Rebuilds `value`, replacing each interpolation and the text between them. */
+function mapInterpolations(
+  value: string,
+  inside: (inner: string) => string,
+  outside: (text: string) => string = (text) => text,
+): string {
+  const parts: string[] = [];
+  let last = 0;
+  for (const { start, end, inner } of findInterpolations(value)) {
+    if (start > last) parts.push(outside(value.slice(last, start)));
+    parts.push(inside(inner));
+    last = end;
+  }
+  if (last < value.length) parts.push(outside(value.slice(last)));
+  return parts.join('');
+}
 
 type Zone = 'none' | 'values';
 
@@ -215,15 +280,7 @@ export function createAnonymiser(): Anonymiser {
     outside: (text: string) => string,
     inside: (expression: string) => string,
   ): string => {
-    const parts: string[] = [];
-    let last = 0;
-    for (const m of value.matchAll(INTERPOLATION)) {
-      if (m.index > last) parts.push(outside(value.slice(last, m.index)));
-      parts.push(`@{${inside(m[1] ?? '')}}`);
-      last = m.index + m[0].length;
-    }
-    if (last < value.length) parts.push(outside(value.slice(last)));
-    return parts.join('');
+    return mapInterpolations(value, (inner) => `@{${inside(inner)}}`, outside);
   };
 
   const expression = (value: string): string => expressionLiterals(text(value));
@@ -233,7 +290,7 @@ export function createAnonymiser(): Anonymiser {
     if (query.startsWith('@') && !query.startsWith('@{')) return expression(query);
     // Mask expressions first so quotes around and between them can't be misread as literals.
     const expressions: string[] = [];
-    const masked = query.replace(INTERPOLATION, (_match, inner: string) => {
+    const masked = mapInterpolations(query, (inner) => {
       expressions.push(inner);
       return `\uE000${expressions.length - 1}\uE000`;
     });

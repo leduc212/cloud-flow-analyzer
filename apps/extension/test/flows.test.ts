@@ -157,6 +157,11 @@ describe('sorting, filtering and export', () => {
     expect(filterRows(rows, '', 'not-analysed').map((r) => r.name)).toEqual(['Charlie']);
   });
 
+  it('escapes backslashes and pipes in Markdown cells', () => {
+    const md = markdownSummary([row('A | B \\', analysed('C', 70))], 'Env');
+    expect(md).toContain('| A \\| B \\\\ | C (70) |');
+  });
+
   it('exports the analysed flows as Markdown, worst first', () => {
     const md = markdownSummary(rows, 'Contoso Dev', new Date('2026-09-25T00:00:00Z'));
     expect(md).toContain('# Flow analysis: Contoso Dev');

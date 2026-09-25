@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import bad from '../../../fixtures/flows/sync-contacts-bad.json' with { type: 'json' };
 import { analyseFlow } from '../src/analyse.ts';
-import { anonymise, createAnonymiser } from '../src/anonymise.ts';
+import { anonymise, createAnonymiser, findInterpolations } from '../src/anonymise.ts';
 
 const GUID = 'A1B2C3D4-1111-2222-3333-444455556666';
 
@@ -144,5 +144,38 @@ describe('anonymise', () => {
     );
     expect(after).toEqual(before);
     expect(JSON.stringify(anonymise(bad))).not.toContain('contoso');
+  });
+});
+
+describe('findInterpolations', () => {
+  const inners = (value: string) => findInterpolations(value).map((i) => i.inner);
+
+  it('finds expressions, skipping quoted strings and their escaped quotes', () => {
+    const text = "Hello @{triggerBody()?['name']}, total @{outputs('Compose')}";
+    expect(findInterpolations(text)).toEqual([
+      { start: 6, end: 31, inner: "triggerBody()?['name']" },
+      { start: 39, end: 60, inner: "outputs('Compose')" },
+    ]);
+    expect(inners("@{concat('a}b', 'it''s')} and @{variables('x')}")).toEqual([
+      "concat('a}b', 'it''s')",
+      "variables('x')",
+    ]);
+    expect(inners("@{''''}@{'}'}")).toEqual(["''''", "'}'"]);
+    expect(inners("name eq '@{items('Loop')?['name']}'")).toEqual(["items('Loop')?['name']"]);
+  });
+
+  it('rejects what is not a complete expression', () => {
+    expect(inners('@{@{nested}')).toEqual(['nested']);
+    expect(inners("@{unclosed 'string}")).toEqual([]);
+    expect(inners('@{has { brace}')).toEqual([]);
+    expect(inners('no expressions at all')).toEqual([]);
+  });
+
+  it('stays fast on input that makes a backtracking pattern explode', () => {
+    const attack = `@{{${"'".repeat(50_000)}`;
+    const started = performance.now();
+    expect(findInterpolations(attack)).toEqual([]);
+    expect(findInterpolations(`@{${"''".repeat(50_000)}`)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });

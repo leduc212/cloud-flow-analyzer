@@ -150,7 +150,9 @@ export function filterRows(rows: FlowRow[], query: string, filter: RowFilter): F
   });
 }
 
-const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\s+/g, ' ');
+/** A Markdown table cell: backslashes first, then pipes, so neither can break the table. */
+const cell = (text: string) =>
+  text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\s+/g, ' ');
 
 /** The analysed flows as a Markdown table, worst first, for a ticket or a team chat. */
 export function markdownSummary(rows: FlowRow[], environment: string, now = new Date()): string {

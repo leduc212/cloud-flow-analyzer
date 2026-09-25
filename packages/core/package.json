@@ -1,0 +1,21 @@
+{
+  "name": "@cfa/core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Flow definition parser, anti-pattern rules and scoring for Cloud Flow Analyzer.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./scoring": "./src/scoring.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.1"
+  }
+}

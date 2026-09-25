@@ -1,0 +1,81 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --text: #242424;
+  --muted: #616161;
+  --border: #d1d1d1;
+  --accent: #0f6cbd;
+  --accent-text: #ffffff;
+  --ok: #107c10;
+  --warn: #bc4b09;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #292929;
+    --text: #f0f0f0;
+    --muted: #adadad;
+    --border: #4d4d4d;
+    --accent: #479ef5;
+    --accent-text: #0a0a0a;
+    --ok: #54b054;
+    --warn: #f7b66e;
+  }
+}
+
+body {
+  width: 280px;
+  margin: 0;
+  padding: 12px 14px 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+button {
+  display: block;
+  width: 100%;
+  font: inherit;
+  padding: 7px 10px;
+  margin-top: 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status,
+.hint {
+  margin: 4px 0;
+  color: var(--muted);
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}

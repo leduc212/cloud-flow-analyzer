@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloud Flow Analyzer · Try it</title>
+    <meta
+      name="description"
+      content="Find slow, wasteful and fragile patterns in Power Automate cloud flows, with the better pattern for each."
+    />
+    <link rel="icon" href="./favicon.png" />
+  </head>
+  <body>
+    <header class="site">
+      <a class="brand" href="./index.html"
+        ><img src="./favicon.png" alt="" width="20" height="20" />Cloud Flow Analyzer</a
+      >
+      <nav aria-label="Site">
+        <a href="./index.html">Try it</a>
+        <a href="./rules.html">Rules</a>
+        <a href="./privacy.html">Privacy</a>
+        <a href="https://github.com/leduc212/cloud-flow-analyzer">GitHub</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Find what makes a cloud flow slow, wasteful or fragile</h1>
+      <p class="lead">
+        Cloud Flow Analyzer checks a Power Automate flow against
+        <a href="./rules.html"><span id="rule-count">30</span> rules</a> drawn from Microsoft's
+        guidance: loops that run one item at a time, data read per item, triggers that fire too
+        often, missing error handling, secrets in run history. Each finding says why it matters and
+        shows the better pattern. The browser extension does this inside the maker portal, next to
+        the designer, and adds measurements from the flow's recent runs.
+      </p>
+      <section class="try" aria-labelledby="try-heading">
+        <h2 id="try-heading">Try it on a flow</h2>
+        <p>
+          Paste a flow definition (from an export package, the Power Automate API, or Dataverse
+          <code>clientdata</code>), open a <code>.json</code> file, or pick a sample. It's analysed
+          here in your browser: nothing is uploaded.
+        </p>
+        <div class="row">
+          <label for="sample">Sample</label>
+          <select id="sample"></select>
+          <label class="file"
+            >Open a file <input id="file" type="file" accept=".json,application/json"
+          /></label>
+        </div>
+        <label for="input" class="visually-hidden">Flow definition JSON</label>
+        <textarea
+          id="input"
+          spellcheck="false"
+          placeholder='{ "properties": { "definition": { "triggers": { … }, "actions": { … } } } }'
+        ></textarea>
+        <div class="row">
+          <button id="analyse" type="button" class="primary">Analyse</button>
+          <span id="status" role="status"></span>
+        </div>
+      </section>
+      <section id="report" class="report" aria-live="polite"></section>
+      <section class="get" aria-labelledby="get-heading">
+        <h2 id="get-heading">Get the extension</h2>
+        <p>
+          Download the latest <code>cloud-flow-analyzer-*.zip</code> from the
+          <a href="https://github.com/leduc212/cloud-flow-analyzer/releases">releases</a>, unzip it,
+          open <code>edge://extensions</code> (or <code>chrome://extensions</code>), turn on
+          Developer mode and choose <b>Load unpacked</b>. Then open a flow in
+          make.powerautomate.com, click the extension and <b>Analyse this flow</b>.
+        </p>
+      </section>
+    </main>
+    <footer>MIT licence · Not affiliated with Microsoft.</footer>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

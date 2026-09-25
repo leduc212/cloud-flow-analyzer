@@ -16,7 +16,7 @@ import { flowApi } from './api/flows.ts';
 import { DEFAULT_RUN_SAMPLE, fetchRunSamples, type FetchedRuns } from './api/runs.ts';
 import { friendlyError } from './shared/errors.ts';
 import { flowPageUrl, parseFlowUrl } from './shared/flow-url.ts';
-import type { BackgroundMessage, ContentMessage } from './shared/messages.ts';
+import { isAllowed, type BackgroundMessage, type ContentMessage } from './shared/messages.ts';
 import { openExtensionPage } from './shared/open-page.ts';
 import { buildPaneResult } from './shared/pane-result.ts';
 import { indexedDbRunCache } from './shared/run-cache.ts';
@@ -212,8 +212,11 @@ async function openFlow(environment: string, flowName: string): Promise<void> {
   chrome.tabs.onUpdated.addListener(loaded);
 }
 
-chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender) => {
+chrome.runtime.onMessage.addListener((raw: unknown, sender) => {
   const fail = (error: unknown) => console.error('Cloud Flow Analyzer:', error);
+  // Each message may only come from where it is sent (see MESSAGE_SOURCES).
+  if (!isAllowed(raw, sender, chrome.runtime.id)) return false;
+  const message: BackgroundMessage = raw;
   if (message.type === 'cfa:analyse-tab') analyseTab(message.tabId, message.runs).catch(fail);
   else if (message.type === 'cfa:analyse-sender' && sender.tab?.id !== undefined) {
     analyseTab(sender.tab.id, message.runs).catch(fail);

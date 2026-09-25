@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloud Flow Analyzer · Capture tool</title>
+    <link rel="icon" href="./icons/icon-32.png" />
+  </head>
+  <body>
+    <header>
+      <h1>Cloud Flow Analyzer <span class="tag">capture tool</span></h1>
+      <p>
+        Collects Power Automate API responses from your tenant so the analyzer can be built and
+        tested against real flows. It only reads (GET). Nothing leaves your browser until you
+        download the file, and the download is anonymised by default.
+      </p>
+    </header>
+    <main>
+      <section>
+        <h2>1. Connection</h2>
+        <div id="tokens" class="tokens"></div>
+        <label class="inline"
+          >API host
+          <select id="origin"></select
+        ></label>
+      </section>
+
+      <section>
+        <h2>2. Environment</h2>
+        <div class="row">
+          <button id="load-envs" type="button">Load environments</button>
+          <select id="env" disabled></select>
+        </div>
+        <p id="env-status" class="status"></p>
+      </section>
+
+      <section>
+        <h2>3. Flows</h2>
+        <div id="sources" class="row"></div>
+        <div class="row">
+          <button id="load-flows" type="button">Load flows</button>
+          <span id="flows-status" class="status"></span>
+        </div>
+        <div id="flow-table"></div>
+        <div class="row options">
+          <label class="inline"
+            >Runs per flow <input id="runs" type="number" min="0" max="50" value="5"
+          /></label>
+          <label class="inline"
+            >Repetition pages per loop action
+            <input id="reps" type="number" min="0" max="10" value="1"
+          /></label>
+        </div>
+        <div class="row">
+          <button id="capture" type="button" class="primary">Capture selected flows</button>
+          <button id="cancel" type="button" hidden>Cancel</button>
+        </div>
+        <p id="progress" class="status"></p>
+      </section>
+
+      <section>
+        <h2>4. Findings</h2>
+        <p class="hint">
+          The v0.1 rules run on every captured definition. Tell us about anything that looks wrong.
+        </p>
+        <div id="results"></div>
+      </section>
+
+      <section>
+        <h2>5. Download</h2>
+        <label class="inline"
+          ><input id="anonymise" type="checkbox" checked /> Anonymise (replaces IDs, emails, URLs,
+          names and literal values; review the file before sharing it)</label
+        >
+        <div class="row">
+          <button id="download" type="button" class="primary">Download capture</button>
+          <button id="clear" type="button">Clear captured data</button>
+        </div>
+        <p id="summary" class="status"></p>
+      </section>
+
+      <details>
+        <summary>Raw GET request</summary>
+        <p class="hint">
+          A full URL on an API host, or a path starting with <code>/</code> to use the selected
+          host. The response is added to the capture.
+        </p>
+        <div class="row">
+          <input
+            id="raw-url"
+            type="text"
+            placeholder="/providers/Microsoft.ProcessSimple/environments?api-version=2016-11-01"
+          />
+          <button id="raw-send" type="button">Send</button>
+        </div>
+        <pre id="raw-result"></pre>
+      </details>
+
+      <details>
+        <summary>Portal endpoints seen <span id="endpoint-count"></span></summary>
+        <p class="hint">
+          Every API call the maker portal made while this extension was running (IDs and names
+          replaced). Browse around the portal, open flows and run history to fill this in.
+        </p>
+        <div id="endpoints"></div>
+        <button id="clear-endpoints" type="button">Clear list</button>
+      </details>
+    </main>
+    <script type="module" src="./src/capture/main.ts"></script>
+  </body>
+</html>

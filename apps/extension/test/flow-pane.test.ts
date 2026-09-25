@@ -118,6 +118,11 @@ describe('buildPaneResult', () => {
     });
     expect(spd03?.fix).toContain('List rows');
     expect(result.findings.find((f) => f.ruleId === 'REL02')?.targetLabel).toBe('Whole flow');
+    expect(result.order.slice(0, 3)).toEqual([
+      'When_a_row_is_added,_modified_or_deleted',
+      'Initialize_emails',
+      'Initialize_count',
+    ]);
     expect(JSON.parse(JSON.stringify(result))).toEqual(result);
   });
 });

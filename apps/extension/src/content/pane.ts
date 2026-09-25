@@ -299,6 +299,8 @@ export class Pane {
     try {
       const outcome = await revealAction(name, finding.target.path, {
         reservedRight: this.panel.hidden ? 0 : PANE_WIDTH,
+        order: this.result?.order ?? [],
+        onProgress: (text) => this.setToast(text),
       });
       this.setToast(outcome.message, !outcome.ok);
     } catch (error) {

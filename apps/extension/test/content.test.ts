@@ -4,6 +4,7 @@ import bad from '../../../fixtures/flows/sync-contacts-bad.json' with { type: 'j
 import { analyseFlow } from '@cfa/core';
 import { HOST_ID, Pane } from '../src/content/pane.ts';
 import {
+  actionNameOfNode,
   designerCheck,
   expandPath,
   findActionElement,
@@ -114,6 +115,14 @@ function designer(
   render();
   return containers;
 }
+
+describe('actionNameOfNode', () => {
+  it('strips the designer suffixes from node IDs', () => {
+    expect(actionNameOfNode('Get_a_row')).toBe('Get_a_row');
+    expect(actionNameOfNode('Apply_to_each-#scope')).toBe('Apply_to_each');
+    expect(actionNameOfNode('Case_1-#subgraph')).toBe('Case_1');
+  });
+});
 
 describe('expandPath', () => {
   it('opens collapsed parents, outermost first', async () => {

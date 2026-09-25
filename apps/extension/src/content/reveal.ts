@@ -13,9 +13,13 @@ export interface RevealOutcome {
   message: string;
 }
 
-/** Keeps actions out from under the pane when centring them. */
 export interface RevealOptions {
+  /** Keeps actions out from under the pane when centring them. */
   reservedRight?: number;
+  /** Trigger and action names in designer order, used to find actions that aren't drawn yet. */
+  order?: string[];
+  /** Status updates while searching. */
+  onProgress?: (text: string) => void;
 }
 
 const label = (name: string) => name.replace(/_/g, ' ');
@@ -326,7 +330,19 @@ export async function expandPath(path: string[]): Promise<ExpandOutcome> {
     const state = toggleState(toggle);
     if (state === 'expanded') return { expanded, blockedAt: parent };
     toggle.click();
-    if (!(await waitFor(() => findActionElement(child)))) {
+    // Done when the next step is drawn, or when the toggle now says open (the next step may
+    // just be off-screen, which the canvas search handles).
+    const result = await waitFor(() => {
+      if (findActionElement(child)) return 'shown';
+      const again = containerCard(parent);
+      const now = again && findCollapseToggle(again);
+      return state === 'collapsed' && now && toggleState(now) === 'expanded' ? 'opened' : undefined;
+    });
+    if (result === 'opened') {
+      expanded.push(parent);
+      return { expanded };
+    }
+    if (!result) {
       if (state === 'unknown') {
         // We may have collapsed an open container: put it back.
         findCollapseToggle(containerCard(parent) ?? toggle)?.click();
@@ -336,6 +352,93 @@ export async function expandPath(path: string[]): Promise<ExpandOutcome> {
     expanded.push(parent);
   }
   return { expanded };
+}
+
+/** Node IDs look like `Name`, `Name-#scope`, `Name-#subgraph`…: the action name is the part before `-#`. */
+export function actionNameOfNode(id: string): string {
+  return id.replace(/-#.*$/, '');
+}
+
+function renderedNodes(documents = searchDocuments()): HTMLElement[] {
+  return documents.flatMap((doc) => [...doc.querySelectorAll<HTMLElement>('.react-flow__node')]);
+}
+
+function nodeById(id: string): HTMLElement | undefined {
+  const selector = `.react-flow__node[data-id="${CSS.escape(id)}"]`;
+  for (const doc of searchDocuments()) {
+    const node = doc.querySelector<HTMLElement>(selector);
+    if (node) return node;
+  }
+  return undefined;
+}
+
+const settle = async () => {
+  await nextFrame();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+};
+
+/** Where to look next when the nearest drawn action stops changing: ahead, right, left, ahead. */
+const LOOK: [number, number][] = [
+  [0, 0.6],
+  [0.6, 0],
+  [-1.2, 0],
+  [0.6, 0.6],
+];
+
+/**
+ * The designer only draws actions near the visible part of the canvas, so an action far away
+ * isn't on the page at all. Walk towards it: centre on the drawn action closest to it in flow
+ * order, look a bit further (ahead, then to the sides for branches), open collapsed parents as
+ * they appear, and repeat until the action is drawn.
+ */
+async function searchCanvas(
+  name: string,
+  path: string[],
+  order: string[],
+  reservedRight: number,
+  expanded: string[],
+): Promise<HTMLElement | undefined> {
+  const tryFind = async () => {
+    const found = findActionElement(name);
+    if (found) return found;
+    const outcome = await expandPath(path);
+    for (const e of outcome.expanded) if (!expanded.includes(e)) expanded.push(e);
+    return findActionElement(name);
+  };
+  const target = order.indexOf(name);
+  let found = await tryFind();
+  if (found || target < 0) return found;
+
+  let lastBest = '';
+  let stuck = 0;
+  for (let step = 0; step < 40 && stuck < 8; step++) {
+    const drawn = renderedNodes()
+      .map((el) => ({ el, index: order.indexOf(actionNameOfNode(el.dataset.id ?? '')) }))
+      .filter((n) => n.index >= 0);
+    const best = drawn.reduce<(typeof drawn)[number] | undefined>(
+      (a, b) => (!a || Math.abs(b.index - target) < Math.abs(a.index - target) ? b : a),
+      undefined,
+    );
+    const canvas = best && canvasOf(best.el);
+    if (!best || !canvas) return undefined;
+    const id = best.el.dataset.id ?? '';
+    if (id !== lastBest) {
+      lastBest = id;
+      stuck = 0;
+      await centreWith(drag, () => nodeById(id), reservedRight);
+    } else {
+      stuck += 1;
+    }
+    const area = canvas.container.getBoundingClientRect();
+    const ahead = best.index < target ? 1 : -1;
+    const [lookX, lookY] = LOOK[stuck % LOOK.length] ?? [0, 0.6];
+    // Dragging moves the content: to look further down, drag the canvas up.
+    drag(canvas.pane, -lookX * area.width, -lookY * ahead * area.height);
+    await settle();
+    found = await tryFind();
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /**
@@ -355,13 +458,17 @@ export async function revealAction(
     if (!isDesignerOpen()) {
       return { ok: false, message: 'Open the flow in the designer (Edit) to jump to actions.' };
     }
-    // Probably inside collapsed scopes, loops or conditions: open them.
-    const outcome = await expandPath(path.length > 0 ? path : [name]);
-    expanded = outcome.expanded;
-    element = find();
+    options.onProgress?.(`Searching the designer for "${label(name)}"…`);
+    const walk = path.length > 0 ? path : [name];
+    if (options.order && renderedNodes().length > 0) {
+      element = await searchCanvas(name, walk, options.order, reservedRight, expanded);
+    } else {
+      // No canvas to walk (classic designer): open collapsed parents on the page.
+      expanded = (await expandPath(walk)).expanded;
+      element = find();
+    }
     if (!element) {
-      const parent =
-        outcome.blockedAt ?? [...path.slice(0, -1)].reverse().find((p) => findActionElement(p));
+      const parent = [...path.slice(0, -1)].reverse().find((p) => findActionElement(p));
       if (parent && findActionElement(parent)) {
         await revealAction(parent, [], options);
         return {
@@ -371,7 +478,7 @@ export async function revealAction(
       }
       return {
         ok: false,
-        message: `Couldn't find "${label(name)}" in the designer. If it's inside a collapsed step, expand it and click again.`,
+        message: `Couldn't find "${label(name)}" in the designer after searching the canvas. If it's inside a collapsed step or branch, expand it and click again, or copy the designer check below and send it to us.`,
       };
     }
   }
@@ -432,7 +539,11 @@ export function designerCheck(documents: Document[] = searchDocuments()): Record
     viewportTransform: viewport?.style.transform ?? null,
     nodeCount: nodes.length,
     nodeIds: nodes.slice(0, 25).map((n) => n.dataset.id ?? null),
-    nodeClasses: [...new Set(nodes.slice(0, 25).map((n) => n.className))].slice(0, 5),
+    nodeClasses: [...new Set(nodes.map((n) => n.className))].slice(0, 10),
+    containerNodeIds: nodes
+      .map((n) => n.dataset.id ?? '')
+      .filter((id) => id.includes('-#'))
+      .slice(0, 15),
     cardTitles: titles.slice(0, 15).map((t) => t.textContent?.trim()),
     toggles: nodes
       .map((n) => {

@@ -28,6 +28,8 @@ export interface PaneResult {
   actionCount: number;
   estimate: { total: number; assumed: boolean };
   findings: PaneFinding[];
+  /** Trigger and action names in designer order (top to bottom), to find actions off-screen. */
+  order: string[];
   warnings: string[];
   analysedAt: string;
 }
@@ -68,6 +70,7 @@ export function buildPaneResult(
         ...(finding.blockedBy ? { blockedBy: finding.blockedBy } : {}),
       };
     }),
+    order: [...tree.triggers.map((t) => t.name), ...tree.all.map((n) => n.name)],
     warnings,
     analysedAt: now.toISOString(),
   };

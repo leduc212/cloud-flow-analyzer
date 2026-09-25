@@ -6,7 +6,7 @@ import { createApiClient } from '../src/api/client.ts';
 import { flowApi } from '../src/api/flows.ts';
 import { fetchRunSamples, type RunSampleOptions } from '../src/api/runs.ts';
 import { HOST_ID, Pane, type DismissalStore } from '../src/content/pane.ts';
-import { markdownReport, scoreWithout } from '../src/content/report.ts';
+import { formatPace, markdownReport, scoreWithout } from '../src/content/report.ts';
 import type { BackgroundMessage } from '../src/shared/messages.ts';
 import { buildPaneResult } from '../src/shared/pane-result.ts';
 import { memoryRunCache } from '../src/shared/run-cache.ts';
@@ -74,16 +74,18 @@ function handler(url: URL): Response {
     : new Response('{"error":{"code":"NotFound"}}', { status: 404 });
 }
 
-function setup() {
+function setup(onFetch?: (url: URL) => void, signal?: AbortSignal) {
   const calls: string[] = [];
   const client = createApiClient({
     getToken: () => TOKEN,
     fetch: async (input) => {
       const url = new URL(String(input));
       calls.push(decodeURIComponent(url.pathname));
+      onFetch?.(url);
       return handler(url);
     },
     sleep: async () => undefined,
+    ...(signal ? { signal } : {}),
   });
   return { client, calls };
 }
@@ -146,29 +148,89 @@ describe('fetchRunSamples', () => {
   });
 });
 
-async function paneResult() {
+async function paneResult(extra: Partial<RunSampleOptions> = {}, dailyRequestLimit?: number) {
   const { client } = setup();
-  const { samples, listed, fromCache } = await fetchRunSamples(
+  const { samples, ...fetched } = await fetchRunSamples(
     client,
     api,
     'env',
     FLOW,
     tree,
-    options(),
+    options({ now: () => Date.parse(at(86_400)), ...extra }),
   );
   return buildPaneResult(
     { environment: 'env', flowId: FLOW },
-    analyseFlow(bad, { runs: samples }),
+    analyseFlow(bad, {
+      runs: samples,
+      sample: fetched.mode,
+      ...(fetched.runsPerDay !== undefined ? { runsPerDay: fetched.runsPerDay } : {}),
+      ...(dailyRequestLimit ? { dailyRequestLimit } : {}),
+    }),
     new Date(0),
-    { listed, fromCache },
+    { ...fetched, ...(dailyRequestLimit ? { dailyRequestLimit } : {}) },
   );
 }
+
+describe('formatPace', () => {
+  it('reads naturally for busy and quiet flows', () => {
+    expect([48.2, 1.6, 1, 0.26, 1 / 30].map(formatPace)).toEqual([
+      '48 runs a day',
+      '2 runs a day',
+      '1 run a day',
+      '1 run every 4 days',
+      '1 run every 30 days',
+    ]);
+  });
+});
+
+describe('sample modes and stopping', () => {
+  it('picks the slowest finished runs of a longer list, and works out the pace', async () => {
+    const { client, calls } = setup();
+    const result = await fetchRunSamples(
+      client,
+      api,
+      'env',
+      FLOW,
+      tree,
+      options({ mode: 'slowest', runs: 1, slowestOf: 100, now: () => Date.parse(at(86_400)) }),
+    );
+    expect(result).toMatchObject({ mode: 'slowest', listed: 3, picked: 1, cancelled: false });
+    expect(result.samples.map((s) => s.name)).toEqual(['r1']);
+    // Three runs started in the last day.
+    expect(result.runsPerDay).toBe(3);
+    expect(calls[0]).toContain('/runs');
+    expect(calls.some((c) => c.includes('/r2/'))).toBe(false);
+  });
+
+  it('keeps the runs read so far when stopped', async () => {
+    const controller = new AbortController();
+    const { client } = setup((url) => {
+      if (url.pathname.endsWith('/repetitions')) {
+        controller.abort();
+        throw new DOMException('Stopped', 'AbortError');
+      }
+    }, controller.signal);
+    const result = await fetchRunSamples(
+      client,
+      api,
+      'env',
+      FLOW,
+      tree,
+      options({ signal: controller.signal }),
+    );
+    expect(result.cancelled).toBe(true);
+    expect(result.samples.map((s) => s.name)).toEqual(['r2']);
+    expect(result.picked).toBe(2);
+  });
+});
 
 describe('runs in the pane result and report', () => {
   it('summarises time, loop sizes and failures', async () => {
     const result = await paneResult();
     const runs = result.runs!;
-    expect(runs).toMatchObject({ sampled: 2, listed: 3, fromCache: 0 });
+    expect(runs).toMatchObject({ mode: 'recent', sampled: 2, listed: 3, fromCache: 0 });
+    expect(runs.runsPerDay).toBe(3);
+    expect(runs.actionsPerRun?.mean).toBeGreaterThan(0);
     expect(runs.statuses).toEqual({ Succeeded: 1, Failed: 1 });
     expect(runs.slowest[0]?.targetLabel).toBe('Apply to each');
     expect(runs.loops).toEqual([
@@ -217,13 +279,17 @@ describe('runs in the pane', () => {
     const plain = buildPaneResult({ environment: 'env', flowId: FLOW }, analyseFlow(bad));
     await pane.showResult(plain);
     button('Analyse recent runs')!.click();
-    expect(sent).toEqual([{ type: 'cfa:analyse-sender', runs: true }]);
+    expect(sent).toEqual([{ type: 'cfa:analyse-sender', runs: 'recent' }]);
+    button('Slowest runs')!.click();
+    expect(sent.at(-1)).toEqual({ type: 'cfa:analyse-sender', runs: 'slowest' });
 
     pane.showLoading(true);
     pane.showRunsProgress(1, 2);
     expect(text('.runs-progress')).toBe('Reading runs… 1 of 2');
     expect(shadow().querySelectorAll('.finding').length).toBe(plain.findings.length);
     expect(button('Analyse recent runs')!.disabled).toBe(true);
+    button('Stop')!.click();
+    expect(sent.at(-1)).toEqual({ type: 'cfa:cancel-runs' });
 
     const withRuns = await paneResult();
     await pane.showResult(withRuns);
@@ -239,7 +305,45 @@ describe('runs in the pane', () => {
 
     // Analysing again keeps reading runs.
     shadow().querySelector<HTMLButtonElement>('button[title="Analyse again"]')!.click();
-    expect(sent.at(-1)).toEqual({ type: 'cfa:analyse-sender', runs: true });
+    expect(sent.at(-1)).toEqual({ type: 'cfa:analyse-sender', runs: 'recent' });
+  });
+
+  it('shows requests a day and lets the user pick a daily limit', async () => {
+    const sent: BackgroundMessage[] = [];
+    const pane = new Pane((m) => sent.push(m), store);
+    const result = await paneResult();
+    await pane.showResult(result);
+    const mean = result.runs!.actionsPerRun!.mean;
+    expect(text('.requests')).toBe(
+      `About ${(mean * 3).toLocaleString('en-US')} a day (3 runs a day × ${mean} per run)`,
+    );
+    const select = shadow().querySelector<HTMLSelectElement>('.limit-select')!;
+    select.value = '40000';
+    select.dispatchEvent(new Event('change'));
+    expect(sent.at(-1)).toEqual({ type: 'cfa:set-limit', limit: 40_000, runs: 'recent' });
+
+    select.value = 'custom';
+    select.dispatchEvent(new Event('change'));
+    const input = shadow().querySelector<HTMLInputElement>('.limit-input')!;
+    expect(input.hidden).toBe(false);
+    input.value = '12000';
+    button('Set')!.click();
+    expect(sent.at(-1)).toEqual({ type: 'cfa:set-limit', limit: 12_000, runs: 'recent' });
+
+    await pane.showResult(await paneResult({}, 1000));
+    expect(text('.requests')).toContain(`% of your 1,000 limit`);
+    const withLimit = shadow().querySelector<HTMLSelectElement>('.limit-select')!;
+    withLimit.value = 'none';
+    withLimit.dispatchEvent(new Event('change'));
+    expect(sent.at(-1)).toEqual({ type: 'cfa:set-limit', runs: 'recent' });
+  });
+
+  it('labels the slowest runs, without a daily pace', async () => {
+    const pane = new Pane(vi.fn(), store);
+    await pane.showResult(await paneResult({ mode: 'slowest', runs: 1 }));
+    expect(text('.runs summary')).toBe('Slowest 1 of 3 runs · median 10.0 s');
+    expect(text('.requests')).toBe('');
+    expect(button('Recent runs')).toBeDefined();
   });
 
   it('shows why runs could not be read', async () => {

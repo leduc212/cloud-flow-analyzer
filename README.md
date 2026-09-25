@@ -35,10 +35,11 @@ See the [project plan](docs/PLAN.md).
 | RES02 | Resources   | Dataverse trigger without "Select columns"                                   |
 | RES03 | Resources   | Recurrence every few minutes or seconds                                      |
 | RES04 | Resources   | List query without column list, filter or row limit                          |
+| RES06 | Resources   | 📊 Requests a day take a large share of the daily limit you set              |
 | RES08 | Resources   | 📊 One create / update / delete per loop item (use bulk or batch requests)   |
 | REL01 | Reliability | Parallel loop writing variables (race condition)                             |
 | REL02 | Reliability | No error handling (Try / Catch)                                              |
-| REL03 | Reliability | Retry policy set to None                                                     |
+| REL03 | Reliability | Retry policy set to None; 📊 calls throttled (429) or retried in recent runs |
 | REL04 | Reliability | Do until with default limits                                                 |
 | REL05 | Reliability | Close to the 500-action or 8-level nesting limits                            |
 | REL07 | Reliability | Flow updates the table or list that triggers it (infinite loop)              |
@@ -72,12 +73,15 @@ open, the grade can't be better than C.
    of the score), and **⧉ Copy report** to paste the findings as Markdown into a ticket or chat.
 6. **How to fix** under each finding explains the better pattern, with a before/after and a link
    to the Microsoft docs.
-7. **Analyse recent runs** reads the flow's last 20 finished runs: how long they took, where the
-   time goes, how many items each loop handled, and which actions failed. Findings marked 📊 in
-   the rules table then use the measured numbers (a loop taking 80% of the run weighs more than
-   one taking 2%). Only timings, statuses and error codes are read, never the data inside the
-   runs. They are kept in your browser so the same run isn't read twice (**Clear cached runs**
-   removes them).
+7. **Analyse recent runs** reads the flow's last 20 finished runs (**Slowest runs**: the 20
+   slowest of the last 100): how long they took, where the time goes, how many items each loop
+   handled, which actions failed, were retried or throttled, and how many requests the flow
+   makes a day. Pick your licence's daily request limit (6,000 / 40,000 / 250,000, or your own)
+   to see the flow's share of it. Findings marked 📊 in the rules table then use the measured
+   numbers (a loop taking 80% of the run weighs more than one taking 2%). **Stop** keeps the runs
+   read so far. Only timings, statuses and error codes are read, never the data inside the runs.
+   They are kept in your browser so the same run isn't read twice (**Clear cached runs** removes
+   them).
 
 If clicking an action doesn't move the designer, open **Designer check** at the bottom of the
 pane, copy it and send it to us.

@@ -9,6 +9,8 @@ export interface RunActionRecord {
   code?: string;
   startTime?: string;
   endTime?: string;
+  /** Codes of the failed attempts that were retried (`retryHistory`), e.g. `429`. */
+  retries?: string[];
 }
 
 /** One execution of an action inside a loop (`…/actions/{action}/repetitions`). */
@@ -19,6 +21,7 @@ export interface RepetitionRecord {
   code?: string;
   startTime?: string;
   endTime?: string;
+  retries?: string[];
 }
 
 /** What was fetched for one run. */
@@ -37,6 +40,13 @@ export interface RunSample {
 function errorCode(properties: Record<string, unknown>): string | undefined {
   const error = asObject(properties.error);
   return asString(properties.code) ?? asString(error.code);
+}
+
+/** Codes of the attempts listed in `retryHistory`. */
+function retryCodes(properties: Record<string, unknown>): string[] | undefined {
+  const history = Array.isArray(properties.retryHistory) ? properties.retryHistory : [];
+  const codes = history.filter(isObject).map((r) => errorCode(r) ?? 'Unknown');
+  return codes.length > 0 ? codes : undefined;
 }
 
 /** Reads a run from the Power Automate API (`properties.startTime`…). */
@@ -59,12 +69,14 @@ export function readRunAction(raw: unknown): RunActionRecord {
   const code = errorCode(p);
   const startTime = asString(p.startTime);
   const endTime = asString(p.endTime);
+  const retries = retryCodes(p);
   return {
     name: asString(record.name) ?? '',
     status: asString(p.status) ?? 'Unknown',
     ...(code ? { code } : {}),
     ...(startTime ? { startTime } : {}),
     ...(endTime ? { endTime } : {}),
+    ...(retries ? { retries } : {}),
   };
 }
 
@@ -76,12 +88,14 @@ export function readRepetition(raw: unknown): RepetitionRecord {
   const code = errorCode(p);
   const startTime = asString(p.startTime);
   const endTime = asString(p.endTime);
+  const retries = retryCodes(p);
   return {
     indexes,
     status: asString(p.status) ?? 'Unknown',
     ...(code ? { code } : {}),
     ...(startTime ? { startTime } : {}),
     ...(endTime ? { endTime } : {}),
+    ...(retries ? { retries } : {}),
   };
 }
 
@@ -105,6 +119,9 @@ export interface ActionRunStats {
   skipped: number;
   /** Executions that failed with 429 / TooManyRequests. */
   throttled: number;
+  /** Retried attempts (from `retryHistory`), and how many of them were throttled (429). */
+  retries: number;
+  retries429: number;
 }
 
 export interface LoopRunStats {
@@ -125,6 +142,12 @@ export interface RunStats {
   durationP95Ms: number;
   actions: Map<string, ActionRunStats>;
   loops: Map<string, LoopRunStats>;
+  /**
+   * Requests (action executions) per run, counted the way Power Platform counts them: the
+   * trigger, every action that ran (loops once per iteration), retries included, skipped
+   * actions not. Actions inside loops whose repetitions weren't read count once per iteration.
+   */
+  actionsPerRun?: { mean: number; p50: number; p95: number };
 }
 
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled', 'timedout', 'terminated']);
@@ -224,6 +247,8 @@ export function summariseRuns(tree: FlowTree, samples: RunSample[]): RunStats {
     let failed = 0;
     let skipped = 0;
     let throttled = 0;
+    let retries = 0;
+    let retries429 = 0;
     for (const run of runs) {
       const records: (RunActionRecord | RepetitionRecord)[] = looped
         ? (run.repetitions[node.name] ?? [])
@@ -239,6 +264,8 @@ export function summariseRuns(tree: FlowTree, samples: RunSample[]): RunStats {
         executed += 1;
         if (status === 'failed' || status === 'timedout') failed += 1;
         if (record.code && THROTTLED.test(record.code)) throttled += 1;
+        retries += record.retries?.length ?? 0;
+        retries429 += record.retries?.filter((c) => THROTTLED.test(c)).length ?? 0;
         const ms = duration(record.startTime, record.endTime);
         if (ms === undefined) continue;
         durations.push(ms);
@@ -263,9 +290,12 @@ export function summariseRuns(tree: FlowTree, samples: RunSample[]): RunStats {
       failed,
       skipped,
       throttled,
+      retries,
+      retries429,
     });
   }
 
+  const perRun = runs.map((run) => actionsInRun(tree, run));
   return {
     sampled: runs.length,
     statuses,
@@ -273,7 +303,58 @@ export function summariseRuns(tree: FlowTree, samples: RunSample[]): RunStats {
     durationP95Ms: percentile(runDurations, 95),
     actions,
     loops: loopIterations(tree, runs),
+    ...(perRun.length > 0
+      ? {
+          actionsPerRun: {
+            mean: Math.round(perRun.reduce((sum, n) => sum + n, 0) / perRun.length),
+            p50: percentile(perRun, 50),
+            p95: percentile(perRun, 95),
+          },
+        }
+      : {}),
   };
+}
+
+/** Requests one run made (see `RunStats.actionsPerRun`). */
+function actionsInRun(tree: FlowTree, run: RunSample): number {
+  const executed = (records: { status: string; retries?: string[] }[]) =>
+    records
+      .filter((r) => r.status.toLowerCase() !== 'skipped')
+      .reduce((sum, r) => sum + 1 + (r.retries?.length ?? 0), 0);
+  // Iterations of each loop's body in this run: distinct index paths down to that loop.
+  const bodies = new Map<string, Set<string>>();
+  for (const repetitions of Object.values(run.repetitions)) {
+    for (const repetition of repetitions) {
+      repetition.indexes.forEach((index, at) => {
+        const key = repetition.indexes
+          .slice(0, at + 1)
+          .map((i) => i.index)
+          .join('/');
+        const set = bodies.get(index.scope) ?? new Set<string>();
+        set.add(key);
+        bodies.set(index.scope, set);
+      });
+    }
+  }
+  let total = tree.triggers.length;
+  for (const node of tree.all) {
+    const loop = ancestors(tree, node).find(isLoop);
+    if (!loop) {
+      total += executed(run.actions.filter((a) => a.name === node.name));
+      continue;
+    }
+    const repetitions = run.repetitions[node.name];
+    total += repetitions ? executed(repetitions) : (bodies.get(loop.name)?.size ?? 0);
+  }
+  return total;
+}
+
+/** How often the flow runs: runs per day from the start times of its recent runs until `now`. */
+export function runsPerDay(startTimes: (string | undefined)[], now: number): number | undefined {
+  const times = startTimes.map((t) => (t ? Date.parse(t) : NaN)).filter(Number.isFinite);
+  if (times.length === 0) return undefined;
+  const days = (now - Math.min(...times)) / 86_400_000;
+  return days > 0 ? times.length / days : undefined;
 }
 
 /**

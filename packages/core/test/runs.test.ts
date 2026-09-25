@@ -8,6 +8,7 @@ import {
   readRunAction,
   repetitionTargets,
   runSamplesFromResponses,
+  runsPerDay,
   summariseRuns,
   type RepetitionRecord,
   type RunActionRecord,
@@ -275,7 +276,7 @@ describe('analysing with runs', () => {
       'In 3 recent runs (medians): "Loop" took 80% of the run time (8.0 s) over 5 items.',
     );
     expect(spd01?.severity).toBe('high');
-    expect(estimate).toEqual({ total: 1 + 1 + 1 + 5, assumed: false });
+    expect(estimate).toEqual({ total: 1 + 1 + 1 + 5, assumed: false, measured: true });
     expect(runStats?.sampled).toBe(3);
     // Rules that don't use run data are unchanged.
     expect(findings.find((f) => f.ruleId === 'REL10')?.evidence).toBeUndefined();
@@ -354,5 +355,134 @@ describe('RES01 most runs stop at the first check', () => {
     const onAction = check({ equals: ["@outputs('Get')?['body/x']", 1] });
     expect(rule(flow({ Check: onAction }, trigger()), samples(10, 0))).toEqual([]);
     expect(analyseFlow(input).findings.filter((f) => f.ruleId === 'RES01')).toEqual([]);
+    // The slowest runs are the ones that did work.
+    expect(
+      analyseFlow(input, { runs: samples(10, 0), sample: 'slowest' }).findings.filter(
+        (f) => f.ruleId === 'RES01',
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('retries and requests', () => {
+  it('reads retry history and counts requests the way Power Platform does', () => {
+    expect(
+      readRunAction({
+        name: 'A',
+        properties: {
+          status: 'Succeeded',
+          retryHistory: [{ code: 'TooManyRequests' }, { error: { code: 'BadGateway' } }],
+        },
+      }).retries,
+    ).toEqual(['TooManyRequests', 'BadGateway']);
+    const tree = parseFlow(
+      flow({
+        List_rows: dataverse('ListRecords', { $select: 'name', $filter: 'x' }),
+        Loop: foreach(
+          LIST,
+          { Update: dataverse('UpdateRecord'), Log: compose(1, { Update: ['Succeeded'] }) },
+          { runAfter: { List_rows: ['Succeeded'] } },
+        ),
+        Skipped: compose(1, { Loop: ['Failed'] }),
+      }),
+    );
+    const sample = run(
+      'r1',
+      10,
+      [
+        { ...action('List_rows', 0, 1), retries: ['429', '429'] },
+        action('Loop', 1, 9),
+        action('Skipped', 9, 9, 'Skipped'),
+      ],
+      {
+        Update: [
+          repetition([['Loop', 0]], 1, 2),
+          { ...repetition([['Loop', 1]], 2, 3), retries: ['TooManyRequests'] },
+          repetition([['Loop', 2]], 3, 3, 'Skipped'),
+        ],
+      },
+    );
+    const stats = summariseRuns(tree, [sample]);
+    expect(stats.actions.get('List_rows')).toMatchObject({ retries: 2, retries429: 2 });
+    expect(stats.actions.get('Update')).toMatchObject({ retries: 1, retries429: 1 });
+    // Trigger 1 + List rows 1 (+2 retries) + Loop 1 + Update 2 (+1 retry) + Log once per
+    // iteration seen (3, not read) + Skipped 0.
+    expect(stats.actionsPerRun).toEqual({ mean: 11, p50: 11, p95: 11 });
+  });
+
+  it('works out runs per day from start times', () => {
+    const now = Date.parse(at(86_400 * 2));
+    expect(runsPerDay([at(0), at(3600), at(86_400)], now)).toBe(1.5);
+    expect(runsPerDay([at(0)], now)).toBe(0.5);
+    expect(runsPerDay([undefined, 'nonsense'], now)).toBeUndefined();
+  });
+});
+
+describe('REL03 with runs', () => {
+  const retried = (retries: string[], status = 'Succeeded', code?: string) =>
+    loopFlowWith({ ...action('List_rows', 0, 1, status, code), retries });
+  function loopFlowWith(list: RunActionRecord): RunSample[] {
+    return [run('r1', 10, [list, action('Loop', 1, 9)], {})];
+  }
+
+  it('flags throttled calls, higher when they failed', () => {
+    const throttled = analyseFlow(loopFlow, { runs: retried(['429', '429']) }).findings.filter(
+      (f) => f.ruleId === 'REL03',
+    );
+    expect(throttled).toHaveLength(1);
+    expect(throttled[0]?.severity).toBe('medium');
+    expect(throttled[0]?.message).toContain(
+      '"List rows" was throttled (429 Too Many Requests) 2× in 1 run.',
+    );
+    const failed = analyseFlow(loopFlow, {
+      runs: retried(['429'], 'Failed', 'TooManyRequests'),
+    }).findings.find((f) => f.ruleId === 'REL03');
+    expect(failed?.severity).toBe('high');
+    expect(failed?.message).toContain('failed 1× because of it');
+  });
+
+  it('notes other retries at low severity, and nothing without retries', () => {
+    const flaky = analyseFlow(loopFlow, { runs: retried(['BadGateway']) }).findings.find(
+      (f) => f.ruleId === 'REL03',
+    );
+    expect(flaky?.severity).toBe('low');
+    expect(flaky?.message).toContain('needed 1 retry after temporary errors');
+    expect(
+      analyseFlow(loopFlow, { runs: retried([]) }).findings.filter((f) => f.ruleId === 'REL03'),
+    ).toEqual([]);
+  });
+});
+
+describe('RES06 share of the daily request limit', () => {
+  const samples = [loopRun('r1', 4), loopRun('r2', 6), loopRun('r3', 5)];
+  const res06 = (options: Parameters<typeof analyseFlow>[1]) =>
+    analyseFlow(loopFlow, { runs: samples, ...options }).findings.filter(
+      (f) => f.ruleId === 'RES06',
+    );
+
+  it('compares requests a day with the limit the user set', () => {
+    // 8 requests per run (mean) × 1,000 runs a day = 8,000.
+    const [finding] = res06({ runsPerDay: 1000, dailyRequestLimit: 10_000 });
+    expect(finding?.severity).toBe('medium');
+    expect(finding?.evidence).toEqual({ requestsPerDay: 8000 });
+    expect(finding?.message).toContain(
+      'about 1,000 runs a day × 8 requests per run), this flow makes about 8,000 requests a day: 80% of the 10,000 daily limit you set.',
+    );
+    expect(res06({ runsPerDay: 1000, dailyRequestLimit: 6000 })[0]?.severity).toBe('high');
+    expect(res06({ runsPerDay: 1000, dailyRequestLimit: 40_000 })[0]?.severity).toBe('low');
+  });
+
+  it('needs a limit, a pace, a recent sample and a real share', () => {
+    expect(res06({ runsPerDay: 1000 })).toEqual([]);
+    expect(res06({ dailyRequestLimit: 10_000 })).toEqual([]);
+    expect(res06({ runsPerDay: 1000, dailyRequestLimit: 10_000, sample: 'slowest' })).toEqual([]);
+    expect(res06({ runsPerDay: 10, dailyRequestLimit: 40_000 })).toEqual([]);
+  });
+
+  it('says when the sample is the slowest runs', () => {
+    const spd01 = analyseFlow(loopFlow, { runs: samples, sample: 'slowest' }).findings.find(
+      (f) => f.ruleId === 'SPD01',
+    );
+    expect(spd01?.message).toContain('In the 3 slowest recent runs (medians)');
   });
 });

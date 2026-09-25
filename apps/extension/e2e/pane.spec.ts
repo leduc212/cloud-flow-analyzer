@@ -175,7 +175,9 @@ test('reads recent runs, rescores with them and jumps to the busiest loop', asyn
   mockApi,
   analyse,
 }) => {
-  const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1000).toISOString();
+  // One run, an hour ago: a pace of 24 runs a day.
+  const start = Date.now() - 3_600_000;
+  const at = (seconds: number) => new Date(start + seconds * 1000).toISOString();
   const step = (name: string, start: number, end: number) => ({
     name,
     properties: { status: 'Succeeded', startTime: at(start), endTime: at(end) },
@@ -230,6 +232,16 @@ test('reads recent runs, rescores with them and jumps to the busiest loop', asyn
     .click();
   expect(await settled(portal)).toBe('Showing "Apply to each".');
   expect(await nodeCentre(portal, 'Apply_to_each-#scope')).toEqual(VISIBLE_CENTRE);
+
+  // Setting a daily limit: the worker saves it and analyses again, reading the run from cache.
+  expect(await paneText(portal, '.requests')).toMatch(
+    /^About [\d,]+ a day \(24 runs a day × \d+ per run\)$/,
+  );
+  await portal.locator('#cfa-pane-host .limit-select').selectOption('40000');
+  await expect
+    .poll(() => paneText(portal, '.requests'), { timeout: 15_000 })
+    .toMatch(/% of your 40,000 limit$/);
+  expect(await paneText(portal, '.runs .hint')).toContain('1 from cache');
 });
 
 test('explains what to do when the flow page is not a flow', async ({ openPortal, analyse }) => {

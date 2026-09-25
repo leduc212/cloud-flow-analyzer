@@ -7,6 +7,7 @@ import {
   type FindingTarget,
   type FlowAnalysis,
   type FlowTree,
+  type RunSampleMode,
 } from '@cfa/core';
 import type { FlowRef } from './flow-url.ts';
 
@@ -48,12 +49,31 @@ export interface PaneRunTarget {
   steps: PathStep[];
 }
 
+/** What the worker read about the runs, besides the samples themselves. */
+export interface RunsFetched {
+  mode: RunSampleMode;
+  listed: number;
+  picked: number;
+  fromCache: number;
+  cancelled: boolean;
+  runsPerDay?: number;
+  dailyRequestLimit?: number;
+}
+
 export interface PaneRuns {
+  mode: RunSampleMode;
   /** Finished runs analysed. */
   sampled: number;
   /** Runs listed (finished or not). */
   listed: number;
+  /** Finished runs picked to be read (more than `sampled` when the user stopped early). */
+  picked: number;
+  cancelled: boolean;
   fromCache: number;
+  runsPerDay?: number;
+  /** Requests per run, counted from the runs. */
+  actionsPerRun?: { mean: number; p50: number };
+  dailyRequestLimit?: number;
   statuses: Record<string, number>;
   durationP50Ms: number;
   durationP95Ms: number;
@@ -90,6 +110,8 @@ export interface PaneResult {
   runs?: PaneRuns;
   /** Why the runs couldn't be read, when the user asked for them. */
   runsError?: string;
+  /** The daily request limit the user set, if any. */
+  dailyRequestLimit?: number;
 }
 
 function steps(tree: FlowTree, path: string[]): PathStep[] {
@@ -112,10 +134,7 @@ const CONTAINERS = new Set(['scope', 'condition', 'switch']);
 const isLoop = (node: ActionNode) => node.kind === 'foreach' || node.kind === 'until';
 
 /** The runs summary shown in the pane: time, loop sizes, failures. */
-export function buildPaneRuns(
-  analysis: FlowAnalysis,
-  fetched: { listed: number; fromCache: number },
-): PaneRuns | undefined {
+export function buildPaneRuns(analysis: FlowAnalysis, fetched: RunsFetched): PaneRuns | undefined {
   const { tree, runStats } = analysis;
   if (!runStats) return undefined;
   const nodes = tree.all;
@@ -159,10 +178,19 @@ export function buildPaneRuns(
     .filter((f) => !CONTAINERS.has(tree.byName.get(f.target.name ?? '')?.kind ?? ''))
     .sort((a, b) => b.failed + b.throttled - (a.failed + a.throttled))
     .slice(0, 5);
+  const perRun = runStats.actionsPerRun;
   return {
+    mode: fetched.mode,
     sampled: runStats.sampled,
     listed: fetched.listed,
+    picked: fetched.picked,
+    cancelled: fetched.cancelled,
     fromCache: fetched.fromCache,
+    ...(fetched.runsPerDay !== undefined ? { runsPerDay: fetched.runsPerDay } : {}),
+    ...(perRun ? { actionsPerRun: { mean: perRun.mean, p50: perRun.p50 } } : {}),
+    ...(fetched.dailyRequestLimit !== undefined
+      ? { dailyRequestLimit: fetched.dailyRequestLimit }
+      : {}),
     statuses: runStats.statuses,
     durationP50Ms: runStats.durationP50Ms,
     durationP95Ms: runStats.durationP95Ms,
@@ -176,7 +204,7 @@ export function buildPaneResult(
   ref: FlowRef,
   analysis: FlowAnalysis,
   now = new Date(),
-  runs?: { listed: number; fromCache: number } | { error: string },
+  runs?: RunsFetched | { error: string; dailyRequestLimit?: number },
 ): PaneResult {
   const paneRuns = runs && 'listed' in runs ? buildPaneRuns(analysis, runs) : undefined;
   const { tree, score, estimate, findings, warnings } = analysis;
@@ -218,5 +246,6 @@ export function buildPaneResult(
     analysedAt: now.toISOString(),
     ...(paneRuns ? { runs: paneRuns } : {}),
     ...(runs && 'error' in runs ? { runsError: runs.error } : {}),
+    ...(runs?.dailyRequestLimit !== undefined ? { dailyRequestLimit: runs.dailyRequestLimit } : {}),
   };
 }

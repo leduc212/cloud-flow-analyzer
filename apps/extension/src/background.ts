@@ -9,11 +9,11 @@
 // asks for a tab to be analysed; the worker injects the pane, fetches the flow with the captured
 // token, analyses it and sends the result to the pane. The page never sees the token. When the
 // pane asks for it, the worker also reads the flow's recent runs (cached in IndexedDB).
-import { analyseFlow, parseFlow, type RunSample } from '@cfa/core';
+import { analyseFlow, parseFlow, type RunSampleMode } from '@cfa/core';
 import { NoTokenError, createApiClient } from './api/client.ts';
 import { fetchFlow } from './api/flow-lookup.ts';
 import { flowApi } from './api/flows.ts';
-import { DEFAULT_RUN_SAMPLE, fetchRunSamples } from './api/runs.ts';
+import { DEFAULT_RUN_SAMPLE, fetchRunSamples, type FetchedRuns } from './api/runs.ts';
 import { friendlyError } from './shared/errors.ts';
 import { parseFlowUrl } from './shared/flow-url.ts';
 import type { BackgroundMessage, ContentMessage } from './shared/messages.ts';
@@ -82,13 +82,26 @@ async function send(tabId: number, message: ContentMessage): Promise<void> {
 }
 
 const runCache = indexedDbRunCache();
+const LIMIT_KEY = 'settings:dailyRequestLimit';
+/** Run reading in progress per tab, so the pane can stop it. */
+const readingRuns = new Map<number, AbortController>();
 
 function flowName(flow: unknown, fallback: string): string {
   const name = (flow as { name?: unknown } | null)?.name;
   return typeof name === 'string' && name ? name : fallback;
 }
 
-async function analyseTab(tabId: number, withRuns = false): Promise<void> {
+async function dailyRequestLimit(): Promise<number | undefined> {
+  const value = (await chrome.storage.local.get(LIMIT_KEY))[LIMIT_KEY];
+  return typeof value === 'number' && value > 0 ? value : undefined;
+}
+
+async function setDailyRequestLimit(limit: number | undefined): Promise<void> {
+  if (limit && limit > 0) await chrome.storage.local.set({ [LIMIT_KEY]: Math.round(limit) });
+  else await chrome.storage.local.remove(LIMIT_KEY);
+}
+
+async function analyseTab(tabId: number, runs?: RunSampleMode): Promise<void> {
   const tab = await chrome.tabs.get(tabId);
   const ref = parseFlowUrl(tab.url);
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content.js'] });
@@ -99,44 +112,70 @@ async function analyseTab(tabId: number, withRuns = false): Promise<void> {
     });
     return;
   }
-  await send(tabId, { type: 'cfa:loading', flowId: ref.flowId, runs: withRuns });
+  await send(tabId, { type: 'cfa:loading', flowId: ref.flowId, runs: runs !== undefined });
   try {
     const tokens = await loadTokens();
     const client = createApiClient({ getToken: (kind) => tokens[kind] });
     const flow = await fetchFlow(client, tokens, ref);
-    if (!withRuns) {
+    if (!runs) {
       await send(tabId, { type: 'cfa:result', result: buildPaneResult(ref, analyseFlow(flow)) });
       return;
     }
-    let samples: RunSample[] | undefined;
-    let fetched: { listed: number; fromCache: number } | { error: string };
+    readingRuns.get(tabId)?.abort();
+    const controller = new AbortController();
+    readingRuns.set(tabId, controller);
+    const limit = await dailyRequestLimit();
+    let fetched: FetchedRuns | undefined;
+    let error: string | undefined;
     try {
       const origin = tokens.flow?.origins[0];
       if (!origin) throw new NoTokenError('flow');
-      const runs = await fetchRunSamples(
-        client,
+      fetched = await fetchRunSamples(
+        createApiClient({ getToken: (kind) => tokens[kind], signal: controller.signal }),
         flowApi(origin),
         ref.environment,
         flowName(flow, ref.flowId),
         parseFlow(flow),
         {
           ...DEFAULT_RUN_SAMPLE,
+          mode: runs,
           cache: runCache,
+          signal: controller.signal,
           onProgress: (done, total) =>
             void send(tabId, { type: 'cfa:runs-progress', flowId: ref.flowId, done, total }).catch(
               () => undefined,
             ),
         },
       );
-      samples = runs.samples;
-      fetched = { listed: runs.listed, fromCache: runs.fromCache };
-    } catch (error) {
-      fetched = { error: friendlyError(error) };
+    } catch (err) {
+      error = controller.signal.aborted ? 'Stopped before any run was read.' : friendlyError(err);
+    } finally {
+      if (readingRuns.get(tabId) === controller) readingRuns.delete(tabId);
     }
-    const analysis = analyseFlow(flow, samples ? { runs: samples } : {});
+    const analysis = analyseFlow(flow, {
+      ...(fetched ? { runs: fetched.samples, sample: fetched.mode } : {}),
+      ...(fetched?.runsPerDay !== undefined ? { runsPerDay: fetched.runsPerDay } : {}),
+      ...(limit !== undefined ? { dailyRequestLimit: limit } : {}),
+    });
+    const extra = limit !== undefined ? { dailyRequestLimit: limit } : {};
     await send(tabId, {
       type: 'cfa:result',
-      result: buildPaneResult(ref, analysis, new Date(), fetched),
+      result: buildPaneResult(
+        ref,
+        analysis,
+        new Date(),
+        fetched
+          ? {
+              mode: fetched.mode,
+              listed: fetched.listed,
+              picked: fetched.picked,
+              fromCache: fetched.fromCache,
+              cancelled: fetched.cancelled,
+              ...(fetched.runsPerDay !== undefined ? { runsPerDay: fetched.runsPerDay } : {}),
+              ...extra,
+            }
+          : { error: error ?? 'The runs could not be read.', ...extra },
+      ),
     });
   } catch (error) {
     await send(tabId, { type: 'cfa:error', message: friendlyError(error) });
@@ -150,5 +189,13 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender) => {
     analyseTab(sender.tab.id, message.runs).catch(fail);
   } else if (message.type === 'cfa:open-capture') openExtensionPage(CAPTURE_PAGE).catch(fail);
   else if (message.type === 'cfa:clear-run-cache') runCache.clear().catch(fail);
+  else if (message.type === 'cfa:cancel-runs' && sender.tab?.id !== undefined) {
+    readingRuns.get(sender.tab.id)?.abort();
+  } else if (message.type === 'cfa:set-limit' && sender.tab?.id !== undefined) {
+    const tabId = sender.tab.id;
+    setDailyRequestLimit(message.limit)
+      .then(() => analyseTab(tabId, message.runs))
+      .catch(fail);
+  }
   return false;
 });

@@ -4,13 +4,15 @@
 import { h } from '../shared/dom.ts';
 import { parseFlowUrl } from '../shared/flow-url.ts';
 import type { BackgroundMessage } from '../shared/messages.ts';
-import type { PaneFinding, PaneResult, PaneRunTarget } from '../shared/pane-result.ts';
+import type { RunSampleMode } from '@cfa/core';
+import type { PaneFinding, PaneResult, PaneRunTarget, PaneRuns } from '../shared/pane-result.ts';
 import styles from './pane.css?raw';
 import {
   CAPPED_NOTE,
   CATEGORY_LABELS,
   findingKey,
   formatDuration,
+  formatPace,
   markdownReport,
   scoreWithout,
 } from './report.ts';
@@ -40,6 +42,16 @@ export const chromeDismissalStore: DismissalStore = {
     else await chrome.storage.local.set({ [key]: keys });
   },
 };
+
+/**
+ * Power Platform requests per 24 hours (Microsoft's request limits page, 2026): Microsoft 365
+ * and Power Apps per app users, Premium per user, and Process per flow.
+ */
+export const LIMIT_PRESETS: [number, string][] = [
+  [6000, 'Microsoft 365 / Power Apps per app'],
+  [40_000, 'Power Automate Premium (per user)'],
+  [250_000, 'Power Automate Process (per flow)'],
+];
 
 const SEVERITY_LABEL: Record<Severity, string> = { high: 'HIGH', medium: 'MEDIUM', low: 'LOW' };
 
@@ -240,7 +252,7 @@ export class Pane {
           onclick: () =>
             this.send({
               type: 'cfa:analyse-sender',
-              ...(this.result?.runs ? { runs: true } : {}),
+              ...(this.result?.runs ? { runs: this.result.runs.mode } : {}),
             }),
         },
         '↻',
@@ -375,22 +387,37 @@ export class Pane {
     this.runsBox.hidden = false;
     const progress = this.runsProgress;
     const reading = progress
-      ? h(
-          'p',
-          { class: 'runs-progress', role: 'status' },
-          progress.total > 0
-            ? `Reading runs… ${progress.done} of ${progress.total}`
-            : 'Reading runs…',
-        )
-      : null;
-    const analyse = (label: string) =>
+      ? [
+          h(
+            'div',
+            { class: 'runs-actions' },
+            h(
+              'span',
+              { class: 'runs-progress', role: 'status' },
+              progress.total > 0
+                ? `Reading runs… ${progress.done} of ${progress.total}`
+                : 'Reading runs…',
+            ),
+            h(
+              'button',
+              {
+                class: 'dismiss',
+                type: 'button',
+                onclick: () => this.send({ type: 'cfa:cancel-runs' }),
+              },
+              'Stop',
+            ),
+          ),
+        ]
+      : [];
+    const read = (mode: RunSampleMode, label: string, primary = true) =>
       h(
         'button',
         {
-          class: 'runs-button',
+          class: primary ? 'runs-button' : 'runs-button secondary',
           type: 'button',
           disabled: progress !== undefined,
-          onclick: () => this.send({ type: 'cfa:analyse-sender', runs: true }),
+          onclick: () => this.send({ type: 'cfa:analyse-sender', runs: mode }),
         },
         label,
       );
@@ -400,23 +427,55 @@ export class Pane {
         h(
           'div',
           { class: 'runs-cta' },
-          analyse('Analyse recent runs'),
+          h(
+            'div',
+            { class: 'runs-actions' },
+            read('recent', 'Analyse recent runs'),
+            read('slowest', 'Slowest runs', false),
+          ),
           h(
             'span',
             { class: 'hint' },
-            'Reads the last 20 runs: timings, loop sizes and failures. No data from inside the runs.',
+            'Reads the last 20 runs (or the 20 slowest of the last 100): timings, loop sizes and failures. No data from inside the runs.',
           ),
         ),
-        ...(reading ? [reading] : []),
+        ...reading,
         ...(result.runsError ? [h('p', { class: 'runs-error' }, result.runsError)] : []),
       );
       return;
     }
+    const other: [RunSampleMode, string] =
+      runs.mode === 'recent' ? ['slowest', 'Slowest runs'] : ['recent', 'Recent runs'];
+    const again = h(
+      'div',
+      { class: 'runs-actions' },
+      read(runs.mode, 'Read runs again'),
+      read(other[0], other[1], false),
+      h(
+        'button',
+        {
+          class: 'dismiss',
+          type: 'button',
+          title: 'Timings and statuses of runs read so far are kept in this browser',
+          onclick: () => {
+            this.send({ type: 'cfa:clear-run-cache' });
+            this.setToast('Cached runs cleared.');
+          },
+        },
+        'Clear cached runs',
+      ),
+    );
     if (runs.sampled === 0) {
       this.runsBox.replaceChildren(
-        h('p', { class: 'hint' }, 'No finished runs yet. Run the flow, then analyse again.'),
-        analyse('Read runs again'),
-        ...(reading ? [reading] : []),
+        h(
+          'p',
+          { class: 'hint' },
+          runs.cancelled
+            ? 'Stopped before any run was read.'
+            : 'No finished runs yet. Run the flow, then analyse again.',
+        ),
+        again,
+        ...reading,
       );
       return;
     }
@@ -428,20 +487,24 @@ export class Pane {
       h('li', {}, this.targetButton(item), h('span', { class: 'value' }, value));
     const list = (title: string, items: HTMLElement[]) =>
       items.length > 0 ? [h('h4', {}, title), h('ul', {}, ...items)] : [];
+    const title =
+      runs.mode === 'slowest'
+        ? `Slowest ${runs.sampled} of ${runs.listed} runs · median ${formatDuration(runs.durationP50Ms)}`
+        : `Recent runs · ${runs.sampled} · median ${formatDuration(runs.durationP50Ms)}`;
     this.runsBox.replaceChildren(
       h(
         'details',
         { open: true },
-        h(
-          'summary',
-          {},
-          `Recent runs · ${runs.sampled} · median ${formatDuration(runs.durationP50Ms)}`,
-        ),
+        h('summary', {}, title),
         h(
           'p',
           { class: 'hint' },
           `${statuses} · slowest 5%: ${formatDuration(runs.durationP95Ms)}${runs.fromCache ? ` · ${runs.fromCache} from cache` : ''}`,
         ),
+        ...(runs.cancelled
+          ? [h('p', { class: 'hint' }, `Stopped after ${runs.sampled} of ${runs.picked} runs.`)]
+          : []),
+        ...this.renderRequests(runs),
         ...list(
           'Where the time goes',
           runs.slowest.map((item) =>
@@ -477,26 +540,89 @@ export class Pane {
           ),
         ),
         h('p', { class: 'hint' }, 'Medians per run. Findings below now use these numbers.'),
-        h(
-          'div',
-          { class: 'runs-actions' },
-          analyse('Read runs again'),
-          h(
-            'button',
-            {
-              class: 'dismiss',
-              type: 'button',
-              title: 'Timings and statuses of runs read so far are kept in this browser',
-              onclick: () => {
-                this.send({ type: 'cfa:clear-run-cache' });
-                this.setToast('Cached runs cleared.');
-              },
-            },
-            'Clear cached runs',
-          ),
-        ),
-        reading,
+        again,
+        ...reading,
       ),
+    );
+  }
+
+  /** Requests a day at the recent pace, against the daily limit the user set. */
+  private renderRequests(runs: PaneRuns): HTMLElement[] {
+    const perRun = runs.actionsPerRun;
+    // The slowest runs aren't typical: only the recent sample gives the pace.
+    if (runs.mode !== 'recent' || !perRun || runs.runsPerDay === undefined) return [];
+    const perDay = Math.round(perRun.mean * runs.runsPerDay);
+    const pace = formatPace(runs.runsPerDay);
+    const limit = runs.dailyRequestLimit;
+    const share = limit
+      ? ` · ${Math.round((perDay / limit) * 100)}% of your ${limit.toLocaleString('en-US')} limit`
+      : '';
+    return [
+      h('h4', {}, 'Requests'),
+      h(
+        'p',
+        { class: 'requests' },
+        `About ${perDay < 1 ? 'less than 1' : perDay.toLocaleString('en-US')} a day (${pace} × ${perRun.mean.toLocaleString('en-US')} per run)${share}`,
+      ),
+      this.limitPicker(limit, runs.mode),
+    ];
+  }
+
+  private limitPicker(limit: number | undefined, mode: RunSampleMode): HTMLElement {
+    const custom = h('input', {
+      class: 'limit-input',
+      type: 'number',
+      min: '1',
+      step: '1000',
+      placeholder: 'Requests per 24 h',
+      'aria-label': 'Daily request limit',
+      hidden: true,
+    });
+    const apply = h(
+      'button',
+      {
+        class: 'dismiss',
+        type: 'button',
+        hidden: true,
+        onclick: () => {
+          const value = Number(custom.value);
+          if (Number.isFinite(value) && value > 0) this.setLimit(value, mode);
+        },
+      },
+      'Set',
+    );
+    const select = h(
+      'select',
+      {
+        class: 'limit-select',
+        'aria-label': 'Daily request limit',
+        onchange: () => {
+          if (select.value === 'custom') {
+            custom.hidden = false;
+            apply.hidden = false;
+            custom.focus();
+          } else if (select.value === 'none') this.setLimit(undefined, mode);
+          else if (select.value) this.setLimit(Number(select.value), mode);
+        },
+      },
+      h(
+        'option',
+        { value: '' },
+        limit ? 'Change your daily limit…' : 'Compare with your daily limit…',
+      ),
+      ...LIMIT_PRESETS.map(([value, label]) =>
+        h('option', { value: String(value) }, `${value.toLocaleString('en-US')} · ${label}`),
+      ),
+      h('option', { value: 'custom' }, 'Other…'),
+      ...(limit ? [h('option', { value: 'none' }, 'Remove the limit')] : []),
+    );
+    return h('div', { class: 'runs-actions limit' }, select, custom, apply);
+  }
+
+  private setLimit(limit: number | undefined, mode: RunSampleMode): void {
+    this.send({ type: 'cfa:set-limit', ...(limit ? { limit } : {}), runs: mode });
+    this.setToast(
+      limit ? `Daily limit set to ${limit.toLocaleString('en-US')}.` : 'Daily limit removed.',
     );
   }
 

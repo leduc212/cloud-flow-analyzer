@@ -1,10 +1,15 @@
+import type { RunSampleMode } from '@cfa/core';
 import type { PaneResult } from './pane-result.ts';
 
 /** Messages to the background worker. */
 export type BackgroundMessage =
-  | { type: 'cfa:analyse-tab'; tabId: number; runs?: boolean }
-  /** From the pane. `runs`: also read the flow's recent runs. */
-  | { type: 'cfa:analyse-sender'; runs?: boolean }
+  | { type: 'cfa:analyse-tab'; tabId: number; runs?: RunSampleMode }
+  /** From the pane. `runs`: also read the flow's runs (the latest, or the slowest of them). */
+  | { type: 'cfa:analyse-sender'; runs?: RunSampleMode }
+  /** From the pane: stop reading runs, and show what was read so far. */
+  | { type: 'cfa:cancel-runs' }
+  /** From the pane: save the daily request limit (undefined clears it), then analyse again. */
+  | { type: 'cfa:set-limit'; limit?: number; runs?: RunSampleMode }
   | { type: 'cfa:open-capture' }
   /** Forget every run read so far (kept in IndexedDB). */
   | { type: 'cfa:clear-run-cache' };

@@ -15,6 +15,8 @@ export interface ActionEstimate {
   total: number;
   /** True when at least one loop used an assumed iteration count. */
   assumed: boolean;
+  /** Counted from recent runs (median) rather than estimated from the definition. */
+  measured?: boolean;
 }
 
 export const DEFAULT_FOREACH_ITERATIONS = 50;

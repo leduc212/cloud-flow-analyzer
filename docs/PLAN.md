@@ -149,7 +149,7 @@ Each rule has: `id`, `category` (speed / resources / reliability / security / ma
 | RES03 | v0.1 | `Recurrence` trigger every second, or every 1–5 minutes | Use an event trigger or a longer interval |
 | RES04 | v0.1 | List queries without a column limit (Dataverse `$select` / FetchXML, SQL and Excel `$select`), or without any of `$filter` / `$top` / FetchXML | Add select / filter / top |
 | RES05 | v0.3 | `paginationPolicy.minimumItemCount` very high (over 5,000) | Lower it, or filter at the source |
-| RES06 📊 | v0.2 | High estimated actions per run (Σ loop iterations × actions inside the loop) | Show the projected daily count against a **user-set** daily request limit (informational) |
+| RES06 📊 | v0.2 ✅ | Requests a day (mean measured requests per run × runs a day) ≥ 20% of the daily limit the user picked (low), ≥ 50% (medium), ≥ 100% (high). Recent sample only. Requests are counted as Microsoft does: trigger, every action that ran, once per loop iteration, retries included, skipped actions not | Fewer actions per run, trigger conditions, or more capacity (Process licence, add-ons) |
 | RES07 | v0.3 | Dataverse *Update a row* that sets more than 10 columns, or maps every column from the trigger body | Send only changed columns (avoids triggering other automations) |
 | RES08 | v0.2 | Create / update / delete one record per loop item (Dataverse, SharePoint, SQL, Excel), grouped per loop; lower confidence when the loop is concurrent; skips one-row loops | Dataverse bulk messages (`CreateMultiple` / `UpdateMultiple`) or `$batch`, SharePoint `$batch`, SQL stored procedure, Excel Office Script; at least concurrency (Microsoft anti-pattern) |
 
@@ -158,7 +158,7 @@ Each rule has: `id`, `category` (speed / resources / reliability / security / ma
 |---|---|---|---|
 | REL01 | v0.1 | Loop concurrency on **and** variables written inside the loop | Race condition. Fix before speeding up |
 | REL02 | v0.1 | Flow with 5 or more actions and no error handling (no action runs after Failed / TimedOut) | Try/Catch/Finally scope pattern |
-| REL03 📊 | v0.2 | Retry policy `none` (definition). Later: default or aggressive retry policy on slow/flaky actions; many 429s | Default or exponential retry; tune `retryPolicy`; reduce the number of calls |
+| REL03 📊 | v0.2 ✅ | Retry policy `none` (definition). With runs: retries from `retryHistory` (in both the action list and repetitions, per the Logic Apps API spec): throttled (429) → medium, high if a call failed on it; other retries → low | Default or exponential retry; fewer calls (bulk reads, batched writes, lower concurrency) |
 | REL04 | v0.1 | `Until` with no limits or with the default ones (count 60, timeout PT1H) | Set explicit limits and check the exit condition after the loop |
 | REL05 | v0.1 | Close to platform limits: 400+ actions (limit 500) or nesting depth 7+ (limit 8) | Split into child flows |
 | REL06 📊 | v0.3 | Trigger concurrency limited to 1, and run data shows runs waiting for each other | Review whether serial runs are really needed |
@@ -326,12 +326,12 @@ Confirmed against a real tenant (commercial cloud, 6 environments, 61 flows):
 **Built (v0.2, 2026-09-25).** What the capture showed, and how the build follows it:
 - A loop's own entry in the run's action list has its real start and end (its wall-clock time). An action *inside* a loop has one entry with misleading times (start of the last iteration, end near the loop's end), so inner actions are measured only from their repetitions.
 - Repetitions carry `repetitionIndexes` (outermost loop first), so one inner action's repetitions give the item count of every loop around it. Nested items are counted per outer item.
-- Neither list has retry history, and the capture has no 429s. Throttling is counted from `code` `429` / `TooManyRequests` when it appears; REL03 📊 waits for real data.
+- The capture has no retries, but the Logic Apps API spec (`WorkflowRunActionProperties`, `OperationResult`) puts `retryHistory` on both run actions and repetitions, so retries and 429s are read from it when they happen (REL03 📊).
 - What is fetched per run: its action list (paged at 100), then repetitions for the first action of each loop (item counts) and for connector / HTTP / child-flow calls inside loops (time), at most 15 actions × 3 pages, and only for loops that ran in that run. Defaults: the last 20 runs; unfinished runs are skipped.
 - Numbers are medians over runs (nearest rank). Time share = the action's (or its outermost loop's) time ÷ the run's duration.
 - Findings of 📊 rules (SPD01, SPD03, SPD07, RES08, RES01) get the measured time share and item count in their message and evidence, so the score weighs them by measured impact. If the loop never had more than one item, a per-item finding drops to low severity.
 - Finished runs are cached in IndexedDB (key: environment/flow/run, plus the list of loop actions read, so a changed flow reads its runs again), dropped after 30 days; the pane has **Clear cached runs**.
-- Not built yet: a "slowest runs" mode, a cancel button, RES06, REL03 📊.
+- Also built: **Slowest runs** (the 20 slowest finished runs of the last 100; RES01 and RES06 skip this sample, since it isn't typical); **Stop** (keeps the runs read so far); requests per run and per day, with the user's daily limit (presets 6,000 / 40,000 / 250,000 from Microsoft's request limits page, or a custom value; stored in `chrome.storage.local`, never applied by default). Runs a day = runs listed ÷ days since the oldest of them.
 
 Original design:
 - **Sampling:** default the last 20 runs (configurable 5–100), plus a "slowest runs" mode (the runs list has start and end times, so the slowest can be picked without extra calls).
@@ -397,7 +397,7 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 - ✅ "Analyse recent runs" in the pane: last 20 runs, rate-limited queue, IndexedDB cache, progress; where the time goes, loop sizes, failures and throttling per action; findings and score use the measured numbers (see §7).
 - ✅ Definition rules from the 2026-09-25 research: SEC01–SEC03, RES08, SPD05, REL03 (retry none), REL07–REL10, and the Security score category (see §4, §5).
 - ✅ 📊 versions of SPD01, SPD03, SPD07, RES08 (measured time share and items); new rule RES01; actions per run from measured loop sizes.
-- ⏳ RES06 (actions per day against a user-set limit), REL03 📊 (needs retry data), "slowest runs" mode, cancel button.
+- ✅ RES06 (requests a day against the limit the user picks), REL03 📊 (retries and 429s from `retryHistory`), "slowest runs" mode, Stop button; the header's actions per run are measured when runs were read.
 - ⏳ Check against the portal: open a flow's run history and compare the slowest action and loop item counts with the pane.
 - *Done when:* the slowest action and loop iteration numbers match what the portal's run history shows.
 

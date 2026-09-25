@@ -178,23 +178,51 @@ export const REL03: Rule = {
   category: 'reliability',
   severity: 'low',
   confidence: 0.6,
-  title: 'Retries turned off',
-  why: 'By default a connector or HTTP call that is throttled (429) or hits a temporary server error (5xx) is retried up to 4 times with increasing waits. With the retry policy set to None, one temporary error fails the step.',
+  title: 'Retries turned off, or calls throttled',
+  why: 'By default a connector or HTTP call that is throttled (429) or hits a temporary server error (5xx) is retried up to 4 times with increasing waits. With the retry policy set to None, one temporary error fails the step. Calls that keep getting throttled slow the run down, and every retry counts toward your request limits.',
   fix: "Set the retry policy back to Default (or Exponential interval) in the step's Settings. Keep None only when repeating the call is unsafe, and then handle the failure explicitly.",
   example: {
     before: 'HTTP  Retry policy: None',
     after: 'HTTP  Retry policy: Default  (up to 4 retries, exponential)',
   },
   docs: [DOCS.errorHandling, DOCS.limits],
-  check({ tree }) {
+  check({ tree, runs }) {
     const matches: RuleMatch[] = [];
+    const noRetry = new Set<string>();
     for (const node of tree.all) {
       const policy = node.settings.retryPolicy;
       if (!isObject(policy) || asString(policy.type)?.toLowerCase() !== 'none') continue;
+      noRetry.add(node.name);
+      const failed = runs?.stats.actions.get(node.name)?.throttled ?? 0;
       matches.push({
         target: actionTarget(node),
-        message: `${q(node.name)} has retries turned off, so one throttled or temporary error fails the step.`,
+        message: `${q(node.name)} has retries turned off, so one throttled or temporary error fails the step.${failed > 0 ? ` In ${plural(runs?.stats.sampled ?? 0, 'recent run')}, it failed ${failed}× because it was throttled (429).` : ''}`,
+        ...(failed > 0 ? { severity: 'medium' as const, confidence: 0.9 } : {}),
       });
+    }
+    if (!runs) return matches;
+    const sampled = plural(runs.stats.sampled, 'run');
+    for (const node of tree.all) {
+      const stats = runs.stats.actions.get(node.name);
+      if (!stats || noRetry.has(node.name)) continue;
+      const throttled = stats.retries429 + stats.throttled;
+      if (throttled > 0) {
+        matches.push({
+          target: actionTarget(node),
+          message: `${q(node.name)} was throttled (429 Too Many Requests) ${throttled}× in ${sampled}${stats.throttled > 0 ? `, and failed ${stats.throttled}× because of it` : ''}. The service is limiting how fast this flow calls it.`,
+          severity: stats.throttled > 0 ? 'high' : 'medium',
+          confidence: 0.9,
+          evidence: { retries429: throttled },
+          fix: "Make fewer calls: read in bulk before loops instead of per item, send writes in batches, and lower the loop's concurrency if many parallel calls hit the same service. Spread scheduled runs out instead of starting them together.",
+        });
+      } else if (stats.retries > 0) {
+        matches.push({
+          target: actionTarget(node),
+          message: `${q(node.name)} needed ${plural(stats.retries, 'retry', 'retries')} after temporary errors in ${sampled}. Retries slow the run down and count toward request limits.`,
+          confidence: 0.7,
+          fix: "Check the target service's health and response times; if it's often slow or unavailable, add a timeout and handle the failure path explicitly.",
+        });
+      }
     }
     return matches;
   },

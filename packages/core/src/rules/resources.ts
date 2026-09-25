@@ -11,7 +11,16 @@ import { asNumber, asString, hasValue } from '../definition.ts';
 import { collectStrings } from '../expressions.ts';
 import { descendants, enclosingLoops, isConcurrentLoop, singleRowSource } from '../parser.ts';
 import type { ActionNode } from '../types.ts';
-import { DOCS, actionTarget, plural, q, triggerTarget, type Rule, type RuleMatch } from './rule.ts';
+import {
+  DOCS,
+  FLOW_TARGET,
+  actionTarget,
+  plural,
+  q,
+  triggerTarget,
+  type Rule,
+  type RuleMatch,
+} from './rule.ts';
 
 const TRIGGER_DATA = /\btrigger(?:Outputs|Body)\(\)/;
 
@@ -32,7 +41,8 @@ export const RES01: Rule = {
   },
   docs: [DOCS.triggers, DOCS.understandLimits],
   check({ tree, runs }) {
-    if (!runs) return [];
+    // The slowest runs are the ones that did work: they say nothing about empty runs.
+    if (!runs || runs.mode !== 'recent') return [];
     const trigger = tree.triggers[0];
     // Only event triggers take conditions on their data.
     if (!trigger || trigger.conditions.length > 0) return [];
@@ -227,4 +237,39 @@ export const RES08: Rule = {
   },
 };
 
-export const RESOURCE_RULES: Rule[] = [RES01, RES02, RES03, RES04, RES08];
+export const RES06: Rule = {
+  id: 'RES06',
+  category: 'resources',
+  severity: 'medium',
+  confidence: 0.8,
+  usesRunData: true,
+  title: 'Large share of the daily request limit',
+  why: "Every trigger, action, loop iteration and retry counts toward a 24-hour request limit: per user with a Premium licence (shared by all of the owner's flows), per flow with a Process licence. Over the limit, flows are slowed down.",
+  fix: 'Cut the actions each run executes (loops and per-item calls are usually most of them: see the other findings), stop runs that have nothing to do with a trigger condition, or add capacity (a Process licence for this flow, or request add-ons).',
+  docs: [DOCS.requestLimits, DOCS.whatCounts],
+  check({ runs, settings }) {
+    const limit = settings?.dailyRequestLimit;
+    const perRun = runs?.stats.actionsPerRun;
+    const perDay = runs?.runsPerDay;
+    // The slowest runs make more requests than usual: only a recent sample gives the pace.
+    if (!limit || !perRun || !perDay || runs.mode !== 'recent') return [];
+    const requests = Math.round(perRun.mean * perDay);
+    const share = requests / limit;
+    if (share < 0.2) return [];
+    const severity = share >= 1 ? 'high' : share >= 0.5 ? 'medium' : 'low';
+    const pace =
+      perDay >= 1
+        ? `${plural(Math.round(perDay), 'run')} a day`
+        : `${perDay.toFixed(1)} runs a day`;
+    return [
+      {
+        target: FLOW_TARGET,
+        message: `At its recent pace (about ${pace} × ${plural(perRun.mean, 'request')} per run), this flow makes about ${requests.toLocaleString('en-US')} requests a day: ${Math.round(share * 100)}% of the ${limit.toLocaleString('en-US')} daily limit you set.`,
+        severity,
+        evidence: { requestsPerDay: requests },
+      },
+    ];
+  },
+};
+
+export const RESOURCE_RULES: Rule[] = [RES01, RES02, RES03, RES04, RES06, RES08];

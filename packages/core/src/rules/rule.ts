@@ -10,10 +10,14 @@ import type {
   TriggerNode,
 } from '../types.ts';
 
+/** Which runs were read: the latest ones, or the slowest of the latest. */
+export type RunSampleMode = 'recent' | 'slowest';
+
 export interface RuleContext {
   tree: FlowTree;
   /** Recent runs, when the user asked for run analysis. */
-  runs?: { samples: RunSample[]; stats: RunStats };
+  runs?: { samples: RunSample[]; stats: RunStats; mode: RunSampleMode; runsPerDay?: number };
+  settings?: { dailyRequestLimit?: number };
 }
 
 /** What a rule reports; the engine adds the rule's id, category and defaults. */
@@ -62,6 +66,10 @@ export const DOCS = {
     'https://learn.microsoft.com/en-us/sharepoint/dev/business-apps/power-automate/guidance/working-with-get-items-and-get-files',
   expressions: 'https://learn.microsoft.com/en-us/power-automate/expression-cookbook',
   httpTrigger: 'https://learn.microsoft.com/en-us/power-automate/oauth-authentication',
+  requestLimits:
+    'https://learn.microsoft.com/en-us/power-platform/admin/api-request-limits-allocations',
+  whatCounts:
+    'https://learn.microsoft.com/en-us/power-platform/admin/power-automate-licensing/faqs#what-counts-as-an-action',
 } as const;
 
 export function actionTarget(node: ActionNode): FindingTarget {

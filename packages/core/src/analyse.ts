@@ -1,7 +1,7 @@
 import { estimateActionsPerRun, type ActionEstimate, type EstimateOptions } from './estimate.ts';
 import { enclosingLoops, parseFlow } from './parser.ts';
 import { RULES } from './rules/index.ts';
-import { plural, q, type Rule, type RuleContext } from './rules/rule.ts';
+import { plural, q, type Rule, type RuleContext, type RunSampleMode } from './rules/rule.ts';
 import { summariseRuns, type RunSample, type RunStats } from './runs.ts';
 import { scoreFindings, type Score } from './scoring.ts';
 import type { Finding, FindingEvidence, FlowTree, Severity } from './types.ts';
@@ -13,6 +13,12 @@ export interface AnalyseOptions {
   isAccepted?: (finding: Finding) => boolean;
   /** Recent runs of the flow. Rules marked 📊 then measure instead of assuming. */
   runs?: RunSample[];
+  /** How the runs were picked: the latest ones (default), or the slowest of the latest. */
+  sample?: RunSampleMode;
+  /** How often the flow runs (see `runsPerDay`), for RES06. */
+  runsPerDay?: number;
+  /** The user's daily request limit (Power Platform requests per 24 hours), for RES06. */
+  dailyRequestLimit?: number;
 }
 
 export interface FlowAnalysis {
@@ -34,10 +40,6 @@ function formatMs(ms: number): string {
   return `${(ms / 60_000).toFixed(1)} min`;
 }
 
-/**
- * What the runs measured about a finding's target: the time share of the loop it is in (or of
- * the action itself outside loops), iterations, and throttled calls.
- */
 export interface Measurement {
   evidence: FindingEvidence;
   /** One sentence for the finding's message. */
@@ -54,6 +56,7 @@ export function measure(
   tree: FlowTree,
   stats: RunStats,
   finding: Pick<Finding, 'target'>,
+  mode: RunSampleMode = 'recent',
 ): Measurement | undefined {
   const node =
     finding.target.kind === 'action' ? tree.byName.get(finding.target.name ?? '') : undefined;
@@ -65,7 +68,8 @@ export function measure(
   const time = stats.actions.get(outer.name);
   const share = time?.timeSharePct;
   const iterations = loop ? stats.loops.get(loop.name) : undefined;
-  const throttled = stats.actions.get(node.name)?.throttled ?? 0;
+  const own = stats.actions.get(node.name);
+  const throttled = (own?.throttled ?? 0) + (own?.retries429 ?? 0);
   const evidence: FindingEvidence = {
     ...(share !== undefined ? { timeSharePct: share } : {}),
     ...(iterations ? { iterationsP50: iterations.iterationsP50 } : {}),
@@ -85,9 +89,12 @@ export function measure(
     const per = enclosingLoops(tree, loop).length > 0 ? ' per outer item' : '';
     parts.push(`${q(loop.name)} ran ${items}${per}`);
   }
-  if (throttled > 0) parts.push(`${plural(throttled, 'call')} to it were throttled (429)`);
+  if (throttled > 0) parts.push(`it was throttled ${throttled}× (429)`);
   if (parts.length === 0) return undefined;
-  const runs = plural(stats.sampled, 'recent run');
+  const runs =
+    mode === 'slowest'
+      ? `the ${plural(stats.sampled, 'slowest recent run')}`
+      : plural(stats.sampled, 'recent run');
   return {
     evidence,
     note: `In ${runs} (medians): ${parts.join('; ')}.`,
@@ -100,12 +107,17 @@ export function runRules(
   rules: Rule[],
   warnings: string[] = [],
   runs?: RuleContext['runs'],
+  settings?: RuleContext['settings'],
 ): Finding[] {
   const order = new Map(tree.all.map((node, index) => [node.name, index]));
   const findings: Finding[] = [];
   for (const rule of rules) {
     try {
-      for (const match of rule.check({ tree, ...(runs ? { runs } : {}) })) {
+      for (const match of rule.check({
+        tree,
+        ...(runs ? { runs } : {}),
+        ...(settings ? { settings } : {}),
+      })) {
         const finding: Finding = {
           ...match,
           ruleId: rule.id,
@@ -113,7 +125,8 @@ export function runRules(
           severity: match.severity ?? rule.severity,
           confidence: match.confidence ?? rule.confidence,
         };
-        const measured = rule.usesRunData && runs ? measure(tree, runs.stats, finding) : undefined;
+        const measured =
+          rule.usesRunData && runs ? measure(tree, runs.stats, finding, runs.mode) : undefined;
         if (measured) {
           finding.evidence = { ...measured.evidence, ...finding.evidence };
           finding.message = `${finding.message} ${measured.note}`;
@@ -145,9 +158,20 @@ export function analyseFlow(input: unknown, options: AnalyseOptions = {}): FlowA
   const rules = options.rules ?? RULES.filter((rule) => !rule.offByDefault);
   const samples = options.runs;
   const runStats = samples ? summariseRuns(tree, samples) : undefined;
-  const runs =
-    samples && runStats && runStats.sampled > 0 ? { samples, stats: runStats } : undefined;
-  const findings = runRules(tree, rules, warnings, runs);
+  const runs: RuleContext['runs'] =
+    samples && runStats && runStats.sampled > 0
+      ? {
+          samples,
+          stats: runStats,
+          mode: options.sample ?? 'recent',
+          ...(options.runsPerDay !== undefined ? { runsPerDay: options.runsPerDay } : {}),
+        }
+      : undefined;
+  const settings =
+    options.dailyRequestLimit !== undefined
+      ? { dailyRequestLimit: options.dailyRequestLimit }
+      : undefined;
+  const findings = runRules(tree, rules, warnings, runs, settings);
   const measured = runStats
     ? Object.fromEntries([...runStats.loops.values()].map((l) => [l.name, l.iterationsP50]))
     : {};
@@ -155,10 +179,13 @@ export function analyseFlow(input: unknown, options: AnalyseOptions = {}): FlowA
     tree,
     findings,
     score: scoreFindings(findings, options.isAccepted),
-    estimate: estimateActionsPerRun(tree, {
-      ...options.estimate,
-      iterations: { ...measured, ...options.estimate?.iterations },
-    }),
+    // Measured requests per run when the runs give them; otherwise the definition's estimate.
+    estimate: runs?.stats.actionsPerRun
+      ? { total: runs.stats.actionsPerRun.p50, assumed: false, measured: true }
+      : estimateActionsPerRun(tree, {
+          ...options.estimate,
+          iterations: { ...measured, ...options.estimate?.iterations },
+        }),
     ...(runStats ? { runStats } : {}),
     warnings,
   };

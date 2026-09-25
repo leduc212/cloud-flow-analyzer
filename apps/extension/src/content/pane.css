@@ -486,3 +486,35 @@ footer details button {
   align-items: center;
   gap: 8px;
 }
+
+.runs-button.secondary {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.runs .requests {
+  margin: 2px 0 4px;
+  font-size: 12px;
+}
+
+.limit-select,
+.limit-input {
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  max-width: 100%;
+}
+
+.limit-input {
+  width: 130px;
+}
+
+.limit-select[hidden],
+.limit-input[hidden],
+.runs .dismiss[hidden] {
+  display: none;
+}

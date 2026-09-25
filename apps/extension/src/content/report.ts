@@ -22,6 +22,13 @@ export function formatDuration(ms: number): string {
   return `${(ms / 3_600_000).toFixed(1)} h`;
 }
 
+/** How often a flow runs, in words: "12 runs a day", "1 run every 4 days". */
+export function formatPace(runsPerDay: number): string {
+  if (runsPerDay >= 1.5) return `${Math.round(runsPerDay).toLocaleString('en-US')} runs a day`;
+  if (runsPerDay >= 0.75) return '1 run a day';
+  return `1 run every ${Math.round(1 / runsPerDay).toLocaleString('en-US')} days`;
+}
+
 const SEVERITY = { high: 'High', medium: 'Medium', low: 'Low' } as const;
 
 export const CAPPED_NOTE = 'capped at C while a high security finding is open';

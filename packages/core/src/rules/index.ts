@@ -17,5 +17,5 @@ export function getRule(id: string): Rule | undefined {
   return RULES_BY_ID.get(id);
 }
 
-export type { Rule, RuleContext, RuleMatch } from './rule.ts';
+export type { Rule, RuleContext, RuleMatch, RunSampleMode } from './rule.ts';
 export { DOCS } from './rule.ts';

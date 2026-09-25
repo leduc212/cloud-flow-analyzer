@@ -38,6 +38,7 @@ export {
   type Rule,
   type RuleContext,
   type RuleMatch,
+  type RunSampleMode,
 } from './rules/index.ts';
 export {
   isFinished,
@@ -47,6 +48,7 @@ export {
   readRunAction,
   repetitionTargets,
   runSamplesFromResponses,
+  runsPerDay,
   summariseRuns,
   type ActionRunStats,
   type LoopRunStats,

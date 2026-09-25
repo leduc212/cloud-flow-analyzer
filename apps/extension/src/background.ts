@@ -15,7 +15,7 @@ import { fetchFlow } from './api/flow-lookup.ts';
 import { flowApi } from './api/flows.ts';
 import { DEFAULT_RUN_SAMPLE, fetchRunSamples, type FetchedRuns } from './api/runs.ts';
 import { friendlyError } from './shared/errors.ts';
-import { parseFlowUrl } from './shared/flow-url.ts';
+import { flowPageUrl, parseFlowUrl } from './shared/flow-url.ts';
 import type { BackgroundMessage, ContentMessage } from './shared/messages.ts';
 import { openExtensionPage } from './shared/open-page.ts';
 import { buildPaneResult } from './shared/pane-result.ts';
@@ -182,14 +182,49 @@ async function analyseTab(tabId: number, runs?: RunSampleMode): Promise<void> {
   }
 }
 
+const OPEN_FLOW_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Opens a flow's page and shows the analysis pane once the tab has loaded the flow. Loads of
+ * other pages first (a sign-in redirect, or an error page the user reloads) are waited out.
+ */
+async function openFlow(environment: string, flowName: string): Promise<void> {
+  const tab = await chrome.tabs.create({ url: flowPageUrl(environment, flowName) });
+  const tabId = tab.id;
+  if (tabId === undefined) return;
+  const stop = () => {
+    chrome.tabs.onUpdated.removeListener(loaded);
+    clearTimeout(timer);
+  };
+  const loaded = (id: number, info: { status?: string }) => {
+    if (id !== tabId || info.status !== 'complete') return;
+    void chrome.tabs.get(tabId).then(async (current) => {
+      if (!parseFlowUrl(current.url)) return;
+      try {
+        await analyseTab(tabId);
+        stop();
+      } catch {
+        // An error page keeps the flow's URL but can't take the pane: wait for a reload.
+      }
+    });
+  };
+  const timer = setTimeout(stop, OPEN_FLOW_TIMEOUT_MS);
+  chrome.tabs.onUpdated.addListener(loaded);
+}
+
 chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender) => {
   const fail = (error: unknown) => console.error('Cloud Flow Analyzer:', error);
   if (message.type === 'cfa:analyse-tab') analyseTab(message.tabId, message.runs).catch(fail);
   else if (message.type === 'cfa:analyse-sender' && sender.tab?.id !== undefined) {
     analyseTab(sender.tab.id, message.runs).catch(fail);
   } else if (message.type === 'cfa:open-capture') openExtensionPage(CAPTURE_PAGE).catch(fail);
-  else if (message.type === 'cfa:clear-run-cache') runCache.clear().catch(fail);
-  else if (message.type === 'cfa:cancel-runs' && sender.tab?.id !== undefined) {
+  else if (message.type === 'cfa:open-flows') {
+    const query = message.environment ? `?env=${encodeURIComponent(message.environment)}` : '';
+    openExtensionPage(`flows.html${query}`).catch(fail);
+  } else if (message.type === 'cfa:clear-run-cache') runCache.clear().catch(fail);
+  else if (message.type === 'cfa:open-flow') {
+    openFlow(message.environment, message.flowName).catch(fail);
+  } else if (message.type === 'cfa:cancel-runs' && sender.tab?.id !== undefined) {
     readingRuns.get(sender.tab.id)?.abort();
   } else if (message.type === 'cfa:set-limit' && sender.tab?.id !== undefined) {
     const tabId = sender.tab.id;

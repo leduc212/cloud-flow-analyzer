@@ -1,5 +1,5 @@
 import './popup.css';
-import { parseFlowUrl } from '../shared/flow-url.ts';
+import { parseEnvironment, parseFlowUrl } from '../shared/flow-url.ts';
 import type { BackgroundMessage } from '../shared/messages.ts';
 import { isExpired, loadTokens } from '../shared/token.ts';
 
@@ -7,9 +7,16 @@ const status = document.getElementById('status') as HTMLParagraphElement;
 const analyse = document.getElementById('analyse') as HTMLButtonElement;
 const flowHint = document.getElementById('flow-hint') as HTMLParagraphElement;
 const openCapture = document.getElementById('open-capture') as HTMLButtonElement;
+const allFlows = document.getElementById('all-flows') as HTMLButtonElement;
 
-function send(message: BackgroundMessage): void {
-  void chrome.runtime.sendMessage(message);
+/** Sends a message to the worker, then closes the popup (closing first can lose the message). */
+async function sendAndClose(message: BackgroundMessage): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage(message);
+  } catch {
+    // No reply is expected; the worker got the message.
+  }
+  window.close();
 }
 
 async function init(): Promise<void> {
@@ -37,17 +44,20 @@ async function init(): Promise<void> {
     analyse.disabled = false;
     flowHint.textContent = 'Shows the findings in a pane next to the designer.';
     analyse.addEventListener('click', () => {
-      send({ type: 'cfa:analyse-tab', tabId });
-      window.close();
+      void sendAndClose({ type: 'cfa:analyse-tab', tabId });
     });
   } else {
     flowHint.textContent = 'Open a flow (its details page or the designer) to analyse it.';
   }
+
+  const environment = parseEnvironment(tab?.url);
+  allFlows.addEventListener('click', () => {
+    void sendAndClose({ type: 'cfa:open-flows', ...(environment ? { environment } : {}) });
+  });
 }
 
 openCapture.addEventListener('click', () => {
-  send({ type: 'cfa:open-capture' });
-  window.close();
+  void sendAndClose({ type: 'cfa:open-capture' });
 });
 
 void init();

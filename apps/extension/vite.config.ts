@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => ({
       input: {
         background: resolve(import.meta.dirname, 'src/background.ts'),
         capture: resolve(import.meta.dirname, 'capture.html'),
+        flows: resolve(import.meta.dirname, 'flows.html'),
         popup: resolve(import.meta.dirname, 'popup.html'),
       },
       output: {

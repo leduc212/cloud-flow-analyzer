@@ -402,7 +402,7 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 - *Done when:* the slowest action and loop iteration numbers match what the portal's run history shows.
 
 ### v0.3: Environment and remaining rules
-- "Analyse all": an extension page listing every flow in an environment with its grade and top findings (pre-screened from each flow's `definitionSummary`), linking to the flow so the pane can take over. This replaces the separate full-page Flows app of the first plan.
+- ✅ "Analyse all" (the **All flows** page, opened from the popup on the current environment): lists the default and admin flow lists merged (admin quietly skipped for non-admins), with trigger, state and suspension from each flow's list entry; **Analyse all** fetches every definition through the rate-limited client (admin endpoint for admin-only flows) and runs the definition rules; worst grade first, filters, search, Markdown export; **Open** opens the flow's page and shows the pane once the tab is really on the flow (sign-in redirects and error pages are waited out). Analyses are kept in `chrome.storage.session` keyed by flow + `lastModifiedTime`, so they vanish with the browser and edited flows are analysed again. This replaces the separate full-page Flows app of the first plan. Pre-screening from `definitionSummary` alone was dropped: fetching each definition is one request per flow and gives the real grade.
 - Remaining rules (SPD05 📊, SPD09, RES05, RES07, REL06, MNT02).
 - Demo site on GitHub Pages: sample flows plus a "paste a flow definition JSON" mode. Make the repo public at this point.
 

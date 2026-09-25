@@ -29,3 +29,22 @@ export function parseFlowUrl(url: string | undefined): FlowRef | undefined {
   if (!match?.[1] || !match[2]) return undefined;
   return { environment: decodeURIComponent(match[1]), flowId: match[2].toLowerCase() };
 }
+
+/** The environment a maker portal page belongs to (any page under `/environments/<id>/`). */
+export function parseEnvironment(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (!/^make\.(preview\.)?(powerautomate|powerapps)\.com$/i.test(parsed.hostname))
+      return undefined;
+    const match = /\/environments\/([^/?#]+)/i.exec(parsed.pathname);
+    return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The flow's details page in the portal. */
+export function flowPageUrl(environment: string, flowName: string): string {
+  return `https://make.powerautomate.com/environments/${encodeURIComponent(environment)}/flows/${encodeURIComponent(flowName)}/details`;
+}

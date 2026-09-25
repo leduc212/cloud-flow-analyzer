@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloud Flow Analyzer · All flows</title>
+    <link rel="icon" href="./icons/icon-32.png" />
+  </head>
+  <body>
+    <header>
+      <h1>All flows</h1>
+      <p id="connection" class="status"></p>
+    </header>
+    <main>
+      <div class="toolbar">
+        <label class="inline"
+          >Environment
+          <select id="env" disabled></select
+        ></label>
+        <button id="analyse" type="button" class="primary" disabled>Analyse all</button>
+        <button id="stop" type="button" hidden>Stop</button>
+        <button id="copy" type="button" disabled>Copy summary</button>
+        <span id="status" class="status" role="status"></span>
+      </div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Search flows or triggers" />
+        <div id="filters" class="filters" role="group" aria-label="Filter flows"></div>
+      </div>
+      <div id="table"></div>
+      <p class="hint">
+        Analyses each flow's definition with every rule (no run history: open a flow and use
+        <b>Analyse recent runs</b> in its pane for that). Results are kept until you close the
+        browser. <b>Open</b> opens the flow in the portal with the analysis pane.
+      </p>
+    </main>
+    <script type="module" src="./src/flows/main.ts"></script>
+  </body>
+</html>

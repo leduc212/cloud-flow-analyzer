@@ -83,6 +83,12 @@ open, the grade can't be better than C.
    They are kept in your browser so the same run isn't read twice (**Clear cached runs** removes
    them).
 
+**All flows in an environment:** click the extension icon, then **All flows in this environment**.
+The page lists every flow you can see (all of them for environment admins). **Analyse all** grades
+each one with the definition rules; sort by grade or issues, filter to the ones that need work,
+**Copy summary** as a Markdown table, and **Open** a flow in the portal with its analysis pane.
+Results are kept until you close the browser, and an edited flow is analysed again.
+
 If clicking an action doesn't move the designer, open **Designer check** at the bottom of the
 pane, copy it and send it to us.
 

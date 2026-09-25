@@ -11,6 +11,10 @@ export type BackgroundMessage =
   /** From the pane: save the daily request limit (undefined clears it), then analyse again. */
   | { type: 'cfa:set-limit'; limit?: number; runs?: RunSampleMode }
   | { type: 'cfa:open-capture' }
+  /** Open the All flows page, on this environment when known. */
+  | { type: 'cfa:open-flows'; environment?: string }
+  /** From the All flows page: open a flow in the portal, then analyse it in the pane. */
+  | { type: 'cfa:open-flow'; environment: string; flowName: string }
   /** Forget every run read so far (kept in IndexedDB). */
   | { type: 'cfa:clear-run-cache' };
 

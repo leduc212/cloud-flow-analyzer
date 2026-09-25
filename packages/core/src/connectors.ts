@@ -12,6 +12,11 @@ export const CONNECTOR_NAMES: Record<string, string> = {
   [SQL]: 'SQL Server',
   [EXCEL]: 'Excel Online (Business)',
   [OFFICE365_USERS]: 'Office 365 Users',
+  shared_office365: 'Office 365 Outlook',
+  shared_teams: 'Microsoft Teams',
+  shared_onedriveforbusiness: 'OneDrive for Business',
+  shared_azureblob: 'Azure Blob Storage',
+  shared_approvals: 'Approvals',
 };
 
 export interface ListOperation {

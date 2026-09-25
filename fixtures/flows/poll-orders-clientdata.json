@@ -1,0 +1,102 @@
+{
+  "properties": {
+    "connectionReferences": {
+      "shared_commondataserviceforapps_1": {
+        "runtimeSource": "embedded",
+        "connection": {
+          "connectionReferenceLogicalName": "cfa_sharedcommondataserviceforapps_00001"
+        },
+        "api": { "name": "shared_commondataserviceforapps" }
+      }
+    },
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": { "defaultValue": {}, "type": "Object" },
+        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+      },
+      "triggers": {
+        "Recurrence": {
+          "recurrence": { "frequency": "Minute", "interval": 1 },
+          "type": "Recurrence"
+        }
+      },
+      "actions": {
+        "Initialize_status": {
+          "runAfter": {},
+          "type": "InitializeVariable",
+          "inputs": { "variables": [{ "name": "status", "type": "string", "value": "Pending" }] }
+        },
+        "List_open_order": {
+          "runAfter": { "Initialize_status": ["Succeeded"] },
+          "type": "OpenApiConnection",
+          "inputs": {
+            "host": {
+              "connection": "shared_commondataserviceforapps_1",
+              "operationId": "ListRecords"
+            },
+            "parameters": {
+              "entityName": "salesorders",
+              "$select": "salesorderid,name",
+              "$filter": "statecode eq 0",
+              "$top": 1
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        },
+        "Apply_to_each_order": {
+          "foreach": "@outputs('List_open_order')?['body/value']",
+          "actions": {
+            "Run_a_Child_Flow": {
+              "runAfter": {},
+              "type": "Workflow",
+              "inputs": {
+                "host": { "workflowReferenceName": "00000000-0000-4000-8000-000000000301" },
+                "body": { "text": "@items('Apply_to_each_order')?['salesorderid']" }
+              }
+            },
+            "Apply_to_each_line": {
+              "foreach": "@items('Apply_to_each_order')?['order_details']",
+              "actions": {
+                "Compose_line": {
+                  "runAfter": {},
+                  "type": "Compose",
+                  "inputs": "@items('Apply_to_each_line')?['productname']"
+                }
+              },
+              "runAfter": { "Run_a_Child_Flow": ["Succeeded"] },
+              "type": "Foreach"
+            }
+          },
+          "runAfter": { "List_open_order": ["Succeeded"] },
+          "type": "Foreach"
+        },
+        "Do_until_done": {
+          "actions": {
+            "Get_status": {
+              "runAfter": {},
+              "type": "Http",
+              "inputs": { "method": "GET", "uri": "https://erp.example.com/api/status" }
+            },
+            "Set_status": {
+              "runAfter": { "Get_status": ["Succeeded"] },
+              "type": "SetVariable",
+              "inputs": { "name": "status", "value": "@body('Get_status')?['status']" }
+            },
+            "Delay": {
+              "runAfter": { "Set_status": ["Succeeded"] },
+              "type": "Wait",
+              "inputs": { "interval": { "count": 1, "unit": "Minute" } }
+            }
+          },
+          "runAfter": { "Apply_to_each_order": ["Succeeded"] },
+          "expression": "@equals(variables('status'), 'Done')",
+          "limit": { "count": 60, "timeout": "PT1H" },
+          "type": "Until"
+        }
+      }
+    }
+  },
+  "schemaVersion": "1.0.0.0"
+}

@@ -1,0 +1,155 @@
+{
+  "name": "00000000-0000-4000-8000-000000000102",
+  "type": "Microsoft.ProcessSimple/environments/flows",
+  "properties": {
+    "displayName": "Sync account contacts (after)",
+    "state": "Started",
+    "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "contentVersion": "1.0.0.0",
+      "parameters": {
+        "$connections": { "defaultValue": {}, "type": "Object" },
+        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+      },
+      "triggers": {
+        "When_a_row_is_added,_modified_or_deleted": {
+          "type": "OpenApiConnectionWebhook",
+          "inputs": {
+            "host": {
+              "connectionName": "shared_commondataserviceforapps",
+              "operationId": "SubscribeWebhookTrigger",
+              "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps"
+            },
+            "parameters": {
+              "subscriptionRequest/message": 3,
+              "subscriptionRequest/entityname": "account",
+              "subscriptionRequest/scope": 4,
+              "subscriptionRequest/filteringattributes": "primarycontactid,statuscode",
+              "subscriptionRequest/filterexpression": "statecode eq 0"
+            },
+            "authentication": "@parameters('$authentication')"
+          }
+        }
+      },
+      "actions": {
+        "Try": {
+          "runAfter": {},
+          "type": "Scope",
+          "actions": {
+            "List_accounts": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_commondataserviceforapps",
+                  "operationId": "ListRecords",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps"
+                },
+                "parameters": {
+                  "entityName": "accounts",
+                  "$select": "accountid,name",
+                  "$filter": "statecode eq 0",
+                  "$expand": "primarycontactid($select=emailaddress1)"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "Select_emails": {
+              "runAfter": { "List_accounts": ["Succeeded"] },
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('List_accounts')?['body/value']",
+                "select": "@item()?['primarycontactid/emailaddress1']"
+              }
+            },
+            "Apply_to_each": {
+              "foreach": "@outputs('List_accounts')?['body/value']",
+              "actions": {
+                "Update_account": {
+                  "runAfter": {},
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_commondataserviceforapps",
+                      "operationId": "UpdateRecord",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps"
+                    },
+                    "parameters": {
+                      "entityName": "accounts",
+                      "recordId": "@items('Apply_to_each')?['accountid']",
+                      "item/description": "Synced"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              },
+              "runAfter": { "Select_emails": ["Succeeded"] },
+              "type": "Foreach",
+              "runtimeConfiguration": { "concurrency": { "repetitions": 20 } }
+            },
+            "Send_summary": {
+              "runAfter": { "Apply_to_each": ["Succeeded"] },
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_office365",
+                  "operationId": "SendEmailV2",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365"
+                },
+                "parameters": {
+                  "emailMessage/To": "admin@contoso.com",
+                  "emailMessage/Subject": "Sync finished",
+                  "emailMessage/Body": "<p>@{length(body('Select_emails'))} accounts: @{join(body('Select_emails'), ', ')}</p>"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            }
+          }
+        },
+        "Catch": {
+          "runAfter": { "Try": ["Failed", "TimedOut"] },
+          "type": "Scope",
+          "actions": {
+            "Notify_owner": {
+              "runAfter": {},
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_office365",
+                  "operationId": "SendEmailV2",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365"
+                },
+                "parameters": {
+                  "emailMessage/To": "admin@contoso.com",
+                  "emailMessage/Subject": "Sync failed",
+                  "emailMessage/Body": "<p>@{workflow()?['run']?['name']}</p>"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "Terminate": {
+              "runAfter": { "Notify_owner": ["Succeeded"] },
+              "type": "Terminate",
+              "inputs": { "runStatus": "Failed" }
+            }
+          }
+        }
+      },
+      "outputs": {}
+    },
+    "connectionReferences": {
+      "shared_commondataserviceforapps": {
+        "connectionName": "shared-commondataser-00000000-0000-4000-8000-000000000201",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps",
+        "tier": "NotSpecified"
+      },
+      "shared_office365": {
+        "connectionName": "shared-office365-00000000-0000-4000-8000-000000000202",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_office365",
+        "tier": "NotSpecified"
+      }
+    }
+  }
+}

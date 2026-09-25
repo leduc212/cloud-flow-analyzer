@@ -459,12 +459,17 @@ describe('REL05 platform limits', () => {
     expect(findings(flow(chain(399)), 'REL05')).toEqual([]);
   });
 
-  it('flags nesting 7 levels deep', () => {
-    let actions: Record<string, unknown> = { Deepest: compose(1) };
-    for (let level = 6; level >= 1; level--) actions = { [`Scope_${level}`]: scope(actions) };
-    const [finding] = findings(flow(actions), 'REL05');
+  it('flags nesting 7 levels below the top level, not 6', () => {
+    const nested = (levels: number) => {
+      let actions: Record<string, unknown> = { Deepest: compose(1) };
+      for (let level = levels; level >= 1; level--)
+        actions = { [`Scope_${level}`]: scope(actions) };
+      return flow(actions);
+    };
+    const [finding] = findings(nested(7), 'REL05');
     expect(finding?.target.name).toBe('Deepest');
-    expect(finding?.message).toContain('7 levels');
+    expect(finding?.message).toContain('nested 7 levels deep');
+    expect(findings(nested(6), 'REL05')).toEqual([]);
   });
 });
 

@@ -37,6 +37,13 @@ export function dependsOnIteration(tree: FlowTree, node: ActionNode): boolean {
   return node.variableRefs.some((name) => written.has(name));
 }
 
+/** At most `max` items, then "and N more". */
+function list(items: string[], max = 4): string {
+  return items.length > max
+    ? `${items.slice(0, max).join(', ')} and ${items.length - max} more`
+    : items.join(', ');
+}
+
 function names(nodes: ActionNode[], max = 3): string {
   const shown = nodes.slice(0, max).map((n) => q(n.name));
   return nodes.length > max
@@ -141,7 +148,7 @@ export const SPD02: Rule = {
       const fix = types.size === 1 ? VARIABLE_FIX[[...types][0] ?? ''] : undefined;
       return {
         target: actionTarget(loop),
-        message: `${q(loop.name)} writes ${variables.length === 1 ? 'variable' : 'variables'} ${variables.join(', ')} on every item (${names(writes)}).`,
+        message: `${q(loop.name)} writes ${variables.length === 1 ? 'variable' : 'variables'} ${list(variables)} on every item (${names(writes)}).`,
         ...(fix ? { fix } : {}),
       };
     });

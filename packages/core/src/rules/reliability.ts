@@ -139,12 +139,14 @@ export const REL05: Rule = {
         message: `The flow has ${plural(tree.actionCount, 'action')}; the limit is ${MAX_ACTIONS}.`,
       });
     }
-    if (tree.maxDepth >= MAX_DEPTH - 1) {
+    // The limit counts levels of nesting below the top level (real flows reach depth 9 here).
+    const nesting = tree.maxDepth - 1;
+    if (nesting >= MAX_DEPTH - 1) {
       const deepest = tree.all.find((n) => n.depth === tree.maxDepth);
       if (deepest) {
         matches.push({
           target: actionTarget(deepest),
-          message: `${q(deepest.name)} is nested ${tree.maxDepth} levels deep; the limit is ${MAX_DEPTH}.`,
+          message: `${q(deepest.name)} is nested ${nesting} levels deep; the limit is ${MAX_DEPTH}.`,
         });
       }
     }

@@ -1,0 +1,396 @@
+# Cloud Flow Analyzer — Project Plan
+
+> **Speed and resource recommendations for Power Automate cloud flows, right in your browser.**
+> A browser extension (Edge/Chrome) that reads your flows and their recent runs, finds slow or wasteful patterns, and tells you how to fix them.
+
+Status: M0 (spikes) · Drafted 2026-09-25 · Revised 2026-09-25 after review and owner decisions (see §12) · Owner: LEMD (leduc212)
+
+---
+
+## 1. Goals and non-goals
+
+### Guiding principle
+**Simple but efficient.** The main feature is recognising bad patterns in a flow and recommending the better, optimised pattern. Everything else (run data, scores, environment views) exists to make those recommendations more accurate or easier to act on. When a feature doesn't serve that, leave it out.
+
+### Goals
+1. **Get flows:** list every cloud flow the signed-in user can see in an environment: *My flows*, *Shared with me*, solution flows, and, for environment admins, all flows in the environment.
+2. **Analyse a flow:** parse its definition into an action tree and run a rule engine that finds anti-patterns hurting **speed**, **resource use** (Power Platform requests) and **reliability**.
+3. **Use real run data where it helps:** sample recent runs to measure which actions take the time, how many loop iterations happen and how many throttled retries occur. Rank findings by measured impact.
+4. **Recommend fixes:** every finding explains *why* it matters, *how* to fix it, and shows the better pattern.
+5. **Stay simple and free:** runs entirely in the browser, no servers, no app registration, $0.
+
+### Non-goals (deliberate)
+- Editing or changing flows. The extension is **read-only**.
+- Monitoring, alerting, scheduled scans or dashboards over time.
+- Any link to dataverse-trace (separate project, no correlation).
+- Desktop flows (Power Automate Desktop) and Logic Apps. Possible later.
+- Government and sovereign clouds (GCC, GCC High, DoD, China). Commercial cloud only for now.
+
+### Working preferences (carried over from the owner's other project)
+- $0 to build and run. GitHub only (Pages, Actions, Releases). No Azure, no paid services, no Entra ID app registration.
+- Plain, descriptive naming. Keep "Power Automate" out of the product name; use it only in taglines ("for Power Automate").
+- Assistants commit and push to their working branch. The owner reviews and merges.
+
+---
+
+## 2. Research summary (why a browser extension)
+
+### Where the data lives
+| Data | Source | Notes |
+|---|---|---|
+| Solution flow definitions | Dataverse `workflow.clientdata` (JSON) | Reachable with a Dataverse session |
+| Non-solution flows ("My flows") | **Not in Dataverse**, only via the Power Automate API | https://learn.microsoft.com/en-us/power-automate/manage-flows-with-code |
+| Run-level history | Dataverse `flowrun` (solution flows only, 28-day default retention, not guaranteed complete) | https://learn.microsoft.com/en-us/power-automate/dataverse/cloud-flow-run-metadata |
+| **Per-action timings, loop repetitions, retries** | **Power Automate API only** | `flowlog` has no cloud-flow action log type (its types are desktop flow, work queue, custom and CUA logs) |
+
+**Conclusion:** the most valuable data (which action takes the time) needs a token for the Power Automate API. A browser extension can **reuse the token the maker portal already uses**. No app registration, no cost, and it covers every flow the user can see.
+
+### Proven token approach
+[Power Automate Tools](https://github.com/rithala/power-automate-tools) (a Manifest V3 extension) uses `chrome.webRequest.onBeforeSendHeaders` with `["requestHeaders"]` on `https://*.api.flow.microsoft.com/*` and `https://*.api.powerplatform.com/*`. It reads the `Authorization` header from the portal's own requests and keeps it per tab. It tracks both hosts: the portal is moving from `api.flow.microsoft.com` (api-version `2016-11-01`) to `api.powerplatform.com` (api-version `1`).
+The two hosts use **different token audiences** (`https://service.flow.microsoft.com/` and `https://api.powerplatform.com`), so a token captured on one host can't be used on the other. Tokens are stored per host kind, together with the base URL they were captured on.
+⚠ **Power Automate Tools is GPL-3.** Re-implement the approach; don't copy code (this project is MIT).
+
+### Competitive landscape
+| Tool | What it does | Gap this project fills |
+|---|---|---|
+| Flow Checker (built in) | Basic warnings | Shallow; no run data |
+| Process insights (Microsoft, preview since 2023) | Per-action durations, common paths, bottlenecks | One flow at a time, owner only, preview; shows *where* time goes but not *what to change* |
+| [FlowLens](https://github.com/Yolostream/FlowLens), [powerautomate-lint](https://github.com/verseblocks/powerautomate-lint), pp-lint | Rule checks on the definition | No run data, so findings can't be ranked by impact |
+| [Flow Studio](https://awesome-copilot.github.com/skill/flowstudio-power-automate-monitoring/) | Paid online monitoring | Paid, data leaves the tenant, focused on failures |
+| [Power Automate Tools](https://github.com/rithala/power-automate-tools) | JSON editor | An editor, not an analyzer |
+| [Cloud Flow Viewer](https://rajeevpentyala.com/2025/10/16/new-tool-cloud-flow-viewer-for-power-automate-solutions/) | Lists flows in a solution | Inventory only |
+
+**Positioning: findings ranked by measured impact.** Rules find the pattern; run data shows how much it costs; findings are sorted by payoff.
+
+---
+
+## 3. User experience
+
+### Flow of use
+1. The user opens make.powerautomate.com (or make.powerapps.com) and signs in as usual.
+2. Clicks the extension icon. A full-page extension tab opens (the "app tab"), or the existing one is focused.
+3. The app tab shows the environment picker (from the captured API) and the **Flows** list.
+4. Picks a flow → **Flow report** (definition analysis, instant) → optional **Analyse runs** (samples the last N runs).
+5. The app reads the token's expiry time. Shortly before it expires (about 60–90 minutes after sign-in), a banner asks the user to keep a portal tab open or refresh it; new tokens are picked up automatically.
+
+### Screens
+```
+① Flows                        ② Flow report                          ③ Run profile
+┌────────────────────────┐    ┌─────────────────────────────────┐    ┌──────────────────────────┐
+│ Env: Contoso Dev   ▾   │    │ Sync Contacts to ERP     B (72) │    │ Run 08:14 · 6m 12s       │
+│ 🔍 search   ⚙ filters  │    │ Speed C · Resources B · Rel. A  │    │ ▇▇▇▇▇▇▇▇▇ Apply_to_each 61%│
+│ Name      Score Issues │    │ ~1,900 actions/run (est.)       │    │   Get_a_row ×1240        │
+│ Sync Cont…  C    7     │    │ 🔴 SPD01 Loop runs one at a time│    │     p50 180ms · 3m 43s   │
+│ Invoice a…  A    1     │    │ 🔴 SPD03 Get a row inside loop  │    │ ▇ List_rows 4%           │
+│ Nightly c…  B    3     │    │ 🟠 RES02 Trigger fires on any   │    │ 429 throttled: 38 retries│
+│  [Analyse all]         │    │    column change                │    │ Slowest actions ▸        │
+└────────────────────────┘    │ Action tree (with timings) ▸    │    └──────────────────────────┘
+                              └─────────────────────────────────┘
+```
+
+1. **Flows**
+   - table: name, state, trigger type, source (mine / shared / admin), solution or not, last modified, score, issue count
+   - search, filters, sorting
+   - "Analyse all" runs definition-only analysis across the environment
+2. **Flow report**
+   - score overall and per category
+   - estimated actions per run
+   - findings sorted by severity × impact; each expands to why / how to fix / better pattern (before → after snippet)
+   - action tree drawn like the designer (scopes, conditions, switch cases, loops), with finding badges on actions; clicking a finding highlights its action
+3. **Run profile** (after "Analyse runs")
+   - sample size, time range, success/failure split
+   - slowest actions (median, 95th percentile, share of run time; see §7 for how shares are calculated)
+   - loop iteration statistics; throttling retries (429) per action
+   - 📊 findings updated with measured impact
+
+Extras:
+- Mark a finding as "accepted" (stored locally, excluded from the score).
+- Copy the report as Markdown.
+- Light and dark theme.
+
+---
+
+## 4. Rule catalogue
+
+Each rule has: `id`, `category` (speed / resources / reliability / maintainability), `severity` (high / medium / low), `detect(tree, runStats?)`, `why`, `fix`, `example` (before/after), `docs` link.
+📊 = the rule uses run data when available (and falls back to definition-only).
+**In** = the milestone that ships the rule (definition-only version first where one exists).
+
+**Connector matching.** Rules identify an action by connector **and** `operationId`, never `operationId` alone (`GetItem` exists in both SharePoint and Dataverse). The connector comes from `inputs.host.apiId`, or through `connectionReferences` using `host.connectionName` / `host.connection`. Query parameters also differ per connector (for example, SharePoint *Get items* has no `$select`; it limits columns with a view), so list rules use a per-connector parameter map.
+
+### Speed
+| ID | In | Detects | Recommendation |
+|---|---|---|---|
+| SPD01 📊 | v0.1 | Outermost `Foreach` (not inside another loop) with concurrency off (no `runtimeConfiguration.concurrency.repetitions`, or it's 1) that contains at least one connector, HTTP or child-flow action. Loops are sequential by default, and concurrency only takes effect on the outermost loop | Turn on concurrency (1–50). **Blocked by SPD02/REL01:** fix variable writes first |
+| SPD02 | v0.1 | `SetVariable` / `AppendToArrayVariable` / `AppendToStringVariable` / `IncrementVariable` / `DecrementVariable` inside a sequential `Foreach` (in a concurrent loop this is REL01 instead) | Use **Select** / **Filter array** / **Compose** / `union()` / `join()`. Faster, and makes concurrency safe |
+| SPD03 📊 | v0.1 | Per-item reads inside a `Foreach`: single-record reads (Dataverse *Get a row*, SharePoint *Get item*, Office 365 Users *Get user profile*…), or list queries whose parameters use the current item (N+1 queries). HTTP GET using the current item: lower confidence | Do one bulk query before the loop (`$filter`, `$expand`, FetchXML), then Filter array |
+| SPD04 | v0.1 | Nested `Foreach` (inner loops always run one at a time) | Flatten with Select / `xpath()`, query the child rows with `$expand`, or move the inner loop into a child flow |
+| SPD05 📊 | v0.3 | Loop body is a single `If` with an empty `else`, and run data shows most iterations take the empty branch | Move the condition into the source query `$filter`, or use Filter array before the loop |
+| SPD06 | later | Independent actions chained one after another (no data dependency). Many false positives, because order often matters for side effects (create a record, then send an email). Low severity, low confidence, off by default | Run them as parallel branches |
+| SPD07 📊 | v0.1 | A child flow (`Workflow` action) inside a loop | Send the whole batch to the child flow in one call |
+| SPD08 | v0.1 | `Until` containing a `Wait`/Delay (polling) | Use a trigger or webhook, or a longer interval |
+| SPD09 | v0.3 | The same record or endpoint read repeatedly; the same long expression repeated | Read or calculate once, then reuse via Compose |
+| SPD10 | v0.1 | `Foreach` over the rows of a list query limited to one row (`$top` = 1) | Use `first()` and drop the loop |
+
+### Resources (every action counts toward Power Platform request limits)
+| ID | In | Detects | Recommendation |
+|---|---|---|---|
+| RES01 📊 | v0.2 | Trigger has no `conditions`, and many sampled runs did no real work (every action after the first condition was Skipped) | Add a trigger condition. Runs that are filtered out don't count |
+| RES02 | v0.1 | Dataverse trigger (`SubscribeWebhookTrigger`) whose `subscriptionRequest/message` includes Update (3 = Modified, 4 = Added or Modified, 6 = Modified or Deleted, 7 = all; verify codes in S1) without `subscriptionRequest/filteringattributes` | Set "Select columns" (and "Filter rows" if only some rows matter) |
+| RES03 | v0.1 | `Recurrence` trigger every second, or every 1–5 minutes | Use an event trigger or a longer interval |
+| RES04 | v0.1 | List queries without a column limit (Dataverse `$select` / FetchXML, SQL and Excel `$select`), or without any of `$filter` / `$top` / FetchXML | Add select / filter / top |
+| RES05 | v0.3 | `paginationPolicy.minimumItemCount` very high (over 5,000) | Lower it, or filter at the source |
+| RES06 📊 | v0.2 | High estimated actions per run (Σ loop iterations × actions inside the loop) | Show the projected daily count against a **user-set** daily request limit (informational) |
+| RES07 | v0.3 | Dataverse *Update a row* that sets more than 10 columns, or maps every column from the trigger body | Send only changed columns (avoids triggering other automations) |
+
+### Reliability
+| ID | In | Detects | Recommendation |
+|---|---|---|---|
+| REL01 | v0.1 | Loop concurrency on **and** variables written inside the loop | Race condition. Fix before speeding up |
+| REL02 | v0.1 | Flow with 5 or more actions and no error handling (no action runs after Failed / TimedOut) | Try/Catch/Finally scope pattern |
+| REL03 📊 | v0.2 | Default or aggressive retry policy on slow/flaky actions; many 429s | Tune `retryPolicy`; reduce the number of calls |
+| REL04 | v0.1 | `Until` with no limits or with the default ones (count 60, timeout PT1H) | Set explicit limits and check the exit condition after the loop |
+| REL05 | v0.1 | Close to platform limits: 400+ actions (limit 500) or nesting depth 7+ (limit 8) | Split into child flows |
+| REL06 📊 | v0.3 | Trigger concurrency limited to 1, and run data shows runs waiting for each other | Review whether serial runs are really needed |
+
+### Maintainability (off by default)
+| ID | In | Detects |
+|---|---|---|
+| MNT01 | later | Hard-coded GUIDs, URLs, emails → use environment variables |
+| MNT02 | v0.3 | Default action names (`Compose_3`, `Condition_2`) |
+| MNT03 | later | Scopes and actions with no descriptive name or note |
+
+> Before building each rule, check the facts against Microsoft docs (limits, defaults, operation IDs) and record the source in the rule's `docs` field. Confirmed so far: Apply to each runs sequentially by default; concurrency is 1–50 and only applies to the outermost loop; Until defaults are count 60 and PT1H; 500 actions per flow; nesting depth 8.
+
+---
+
+## 5. Scoring
+- Each category (speed, resources, reliability) starts at **100**. Each finding subtracts **high 25 / medium 10 / low 3**, multiplied by its confidence (0–1). The score can't go below 0.
+- 📊 findings scale by measured impact: the deduction is multiplied by `0.5 + timeShare` (capped at 1.5), so a loop taking 80% of the run weighs more than one taking 5%.
+- Grades: **A ≥ 90, B ≥ 80, C ≥ 65, D ≥ 50, F below 50.**
+- Overall = weighted average: speed 40%, resources 35%, reliability 25%. Maintainability is excluded by default.
+- **Estimated actions per run:** walk the definition; `If` and `Switch` count their largest branch; loops multiply their inner count by the median iteration count measured from runs, or by a default (Foreach 50, Until 10) marked as assumed.
+- Findings marked "accepted" (stored locally by flow ID + rule ID + action path) don't count toward the score.
+
+---
+
+## 6. Architecture
+
+```
+ make.powerautomate.com tab                 Extension
+┌────────────────────────┐   requests   ┌───────────────────────────────┐
+│ portal calls           │ ───────────▶ │ background service worker     │
+│ api.flow / powerplatform│  (headers)  │  • captures Authorization and │
+└────────────────────────┘              │    base URL from portal       │
+                                        │    requests only (initiator)  │
+                                        │  • writes to storage.session  │
+                                        └──────────────┬────────────────┘
+                                                       │ chrome.storage.session
+                                        ┌──────────────▼────────────────┐
+                                        │ app tab (React + Fluent UI 9) │
+                                        │  api/  → Power Automate API    │
+                                        │  store → IndexedDB cache       │
+                                        │  uses @cfa/core                │
+                                        └──────────────┬────────────────┘
+                                                       │
+                                        ┌──────────────▼────────────────┐
+                                        │ @cfa/core (no browser deps)   │
+                                        │  parser → ActionTree           │
+                                        │  rules → Finding[]             │
+                                        │  runs → ActionRunStats         │
+                                        │  scoring                       │
+                                        └───────────────────────────────┘
+```
+
+### Token handling
+- The browser stops an idle MV3 service worker after about 30 seconds, and its memory is lost. So the worker writes each captured token to **`chrome.storage.session`**: memory-only, never written to disk, cleared when the browser closes, and readable only by the extension's own pages. The app tab reads it from there and listens for changes.
+- Only requests whose `initiator` is a maker portal (`make.powerautomate.com`, `make.powerapps.com`, and their `make.preview.` variants) are captured. The app tab's own API calls hit the same hosts and are ignored.
+- Each token is stored with its host kind (`flow` or `powerplatform`), the base URLs it was used on, and the claims the UI needs (`exp`, `tid`, account name). The JWT is decoded, not validated; it's never sent to a host of the other kind.
+
+### Repo layout (pnpm workspaces)
+```
+packages/core/        # parser, rules, run stats, scoring, anonymiser, types (pure TS, Vitest)
+packages/ui/          # shared React components (Flow list, report, tree, run profile)
+apps/extension/       # MV3 manifest, background worker, app tab, capture tool (diagnostics)
+apps/demo/            # GitHub Pages demo: sample flows + "paste definition JSON" mode
+fixtures/flows/       # anonymised flow definitions + run payloads (one or more per rule)
+scripts/              # dev scripts (analyse a flow or capture file from the command line)
+docs/                 # plan, rule docs (one page per rule), ADRs
+```
+
+### Key types (sketch)
+```ts
+type ActionNode = {
+  name: string; type: string;                       // Foreach, If, Scope, Switch, Until, OpenApiConnection, Http, Workflow, SetVariable…
+  kind: ActionKind;                                 // normalised: loop, until, condition, switch, scope, connector, http, child-flow, variable-write…
+  path: string[];                                   // e.g. ["Try", "Apply_to_each", "Get_a_row"]
+  runAfter: Record<string, string[]>;
+  connector?: string; operationId?: string; parameters?: Record<string, unknown>;
+  settings: { concurrency?: number; retryPolicy?: unknown; paginationMinItems?: number; limit?: { count?: number; timeout?: string } };
+  children: ActionNode[];                           // flattened from actions / else.actions / cases.*.actions / default.actions
+  depth: number;                                    // 1 = top level
+  references: string[];                             // action names used in this action's inputs
+};
+type Finding = {
+  ruleId: string; category: 'speed'|'resources'|'reliability'|'maintainability';
+  severity: 'high'|'medium'|'low'; confidence: number;   // 0..1
+  target: { kind: 'flow'|'trigger'|'action'; name?: string; path: string[] };
+  message: string; fix?: string;                    // fix overrides the rule's default text when more specific
+  blockedBy?: string[];                             // e.g. SPD01 blocked by SPD02
+  evidence?: { timeSharePct?: number; iterationsP50?: number; retries429?: number; requestsPerDay?: number };
+};
+type ActionRunStats = { path: string[]; samples: number; p50Ms: number; p95Ms: number; timeSharePct?: number; busyMs: number; iterationsP50?: number; retries429: number; failures: number };
+```
+
+### Parser notes (workflow definition schema)
+- Accepted input: a flow resource from the API (`properties.definition`), Dataverse `clientdata` (JSON string or object), or a bare definition (`{ triggers, actions }`).
+- Triggers: `definition.triggers`. Trigger conditions are in `conditions[]`, trigger concurrency in `runtimeConfiguration.concurrency.runs`, schedule in `recurrence`.
+- Nested actions: `actions` (Scope / Foreach / Until / If-true), `else.actions` (If), `cases.<name>.actions` and `default.actions` (Switch).
+- Loop concurrency: `runtimeConfiguration.concurrency.repetitions`; `operationOptions: "Sequential"` also means one at a time. Pagination: `runtimeConfiguration.paginationPolicy.minimumItemCount`.
+- Connector actions: `type: OpenApiConnection` (older flows: `ApiConnection`, which has a `path` and `method` instead of an `operationId`), `inputs.host.operationId` (e.g. `ListRecords`, `GetItem`, `UpdateRecord`), `inputs.parameters` (`$select`, `$filter`, `$top`…).
+- Dataverse trigger: `operationId: SubscribeWebhookTrigger` with `subscriptionRequest/message`, `subscriptionRequest/entityname`, `subscriptionRequest/filteringattributes`, `subscriptionRequest/filterexpression`.
+- Child flow: `type: Workflow`. Variables: `InitializeVariable`, `SetVariable`, `AppendToArrayVariable`, `IncrementVariable`…
+- Handle expressions (`@{…}`, `@body('X')`) as strings. A simple reference extractor finds `body('…')`, `outputs('…')`, `actions('…')`, `items('…')`, `item()` and `variables('…')`.
+
+### Power Automate API (confirm in spike S1)
+Based on the Logic Apps-style API the portal uses; exact paths and api-versions must be checked against the live portal (the capture tool records every endpoint the portal calls):
+- Environments: `…/providers/Microsoft.ProcessSimple/environments`
+- Flows: `…/environments/{env}/flows` (My flows), `…/flows?$filter=search('team')` (Shared with me), `…/scopes/admin/environments/{env}/v2/flows` (admins: all flows)
+- Get flow with definition: `…/flows/{flowId}` (check whether an `$expand` is needed; admin-listed flows may need the `scopes/admin` path)
+- Runs: `…/flows/{flowId}/runs?$top=N`
+- Run actions: `…/flows/{flowId}/runs/{runId}/actions`
+- Loop repetitions: `…/runs/{runId}/actions/{actionName}/repetitions`, called for each action **inside** a loop, paged
+- Retry info: action results may include `retryHistory`
+
+---
+
+## 7. Run analysis design
+- **Sampling:** default the last 20 runs (configurable 5–100), plus a "slowest runs" mode (the runs list has start and end times, so the slowest can be picked without extra calls).
+- **Per run:** fetch actions; fetch repetitions for each action inside a loop, capped at **500 repetitions per inner action per run**. Request budget per run ≈ 1 + Σ(inner actions × pages).
+- **Rate limiting:** a queue with at most 4 requests at once, backing off on 429 (respect `Retry-After`); progress bar and cancel button.
+- **Caching:** runs never change once finished, so cache them permanently in IndexedDB (keyed by run ID). Definitions are keyed by flow ID + `lastModifiedTime`.
+- **Statistics:** per-action median/95th percentile, iteration counts, throttled retries, failures. Handle missing or skipped actions.
+- **Time share:** actions overlap in parallel branches and concurrent loops, so durations can't simply be summed.
+  - Top-level actions and loops: wall-clock time (end − start) as a share of run duration.
+  - Actions inside a loop: total busy time (sum over iterations) plus per-iteration p50/p95, with no share of run.
+
+---
+
+## 8. Security and privacy
+- **Read-only:** only GET requests to the Power Automate API. Never create, update or delete flows. The API module refuses other methods and any host outside the two API host patterns.
+- **Token:** kept in `chrome.storage.session` only (memory, never on disk, not IndexedDB, not `chrome.storage.local`). Never logged, never included in a capture file, never sent to a host of the other kind.
+- **No outside calls:** no analytics, telemetry or remote code. The default MV3 Content Security Policy blocks remote scripts.
+- **Minimal permissions:** `webRequest` (read headers only, no blocking) and `storage`. Host permissions: `*.api.flow.microsoft.com`, `*.api.powerplatform.com`, and the maker portals (MV3 needs host access to a request's initiator as well as its URL). No `tabs` permission, which would add a "Read your browsing history" warning.
+- **Cache data:** flow definitions can contain sensitive values, so offer a "Clear cache" button and state in the README what's stored locally.
+- **Fixtures and capture files:** the capture tool anonymises by default: IDs, emails, URLs, names and literal input values are replaced; `inputsLink`/`outputsLink` (signed URLs) are removed; expressions are kept. Files must be reviewed before they're committed.
+
+---
+
+## 9. Stack
+| Area | Choice | Why |
+|---|---|---|
+| Language | TypeScript 6.0 (strict, erasable syntax only) | Shared types between core and UI. Move to TypeScript 7 once typescript-eslint supports it |
+| Runtime / packages | Node 22, pnpm 10 workspaces | Current LTS; fast installs |
+| Extension | Manifest V3, plain Vite multi-entry build (no CRXJS) | Only a worker and pages, no content scripts, so no plugin needed |
+| UI | React 19 + **Fluent UI React v9** | Looks like Power Platform |
+| Charts | Small custom SVG (bars, action tree) | No heavy charting library needed |
+| Storage | IndexedDB via `idb` | Caches runs and definitions; stores accepted findings |
+| Tests | Vitest (core + UI components), Playwright (demo site e2e; extension e2e via a persistent Chromium context against a **mocked API** serving fixtures, since CI can't sign in) | Rules must be test-driven |
+| CI | GitHub Actions: lint, typecheck, test, build; the built extension is uploaded as a workflow artifact | Free |
+| Quality | ESLint + Prettier, Dependabot; CodeQL once the repo is public | Free on GitHub (CodeQL and Pages need a public repo on a free account) |
+| Licence | MIT (don't copy GPL code from Power Automate Tools) | Portfolio-friendly |
+
+**Distribution:**
+- GitHub Releases zip (free; load unpacked)
+- **Edge Add-ons** (free)
+- Chrome Web Store: decide at v1.0 ($5 one-time developer fee)
+
+---
+
+## 10. Milestones
+
+### M0: Spikes (de-risk first)
+A **capture tool** page ships inside the extension for the spikes. It shows the captured tokens, lists environments and flows (mine, shared, admin), fetches definitions, runs, run actions and loop repetitions, runs the v0.1 rules on each definition, records every portal endpoint seen, and downloads everything as one anonymised JSON file. The owner runs it against their tenant and commits the reviewed file under `fixtures/captures/`.
+- **S1 Token and API:** capture the token from the current portal (both hosts); list environments and flows; fetch one definition. *Done when a JSON definition of a non-solution flow and of a solution flow are both captured.*
+- **S2 Run payloads:** fetch runs, actions and loop repetitions for a looping flow; confirm the timing fields and retry info; measure request counts and throttling.
+- **S3 Parser coverage:** parse 20+ real (anonymised) definitions covering Scope, If, Switch, Foreach, Until, Workflow and HTTP without errors.
+
+### v0.1: Definition analysis
+- Extension shell, token capture, environment picker, Flows list.
+- Parser → ActionTree; Flow report with the action tree.
+- Rules that work from the definition: SPD01, SPD02, SPD03, SPD04, SPD07, SPD08, SPD10, RES02, RES03, RES04, REL01, REL02, REL04, REL05, each with fixtures and tests.
+- *Done when:* analysing a real flow shows correct findings pinned to the right actions.
+
+### v0.2: Run analysis
+- Sampling, rate-limited queue, IndexedDB cache, Run profile page.
+- 📊 versions of SPD01, SPD03, SPD07; new rules RES01, RES06, REL03; estimated vs. measured actions per run.
+- *Done when:* the slowest action and loop iteration numbers match what the portal's run history shows.
+
+### v0.3: Environment and scoring
+- "Analyse all" (definition-only) with scores in the Flows list; filters.
+- Accepted findings; remaining rules (SPD05, SPD09, RES05, RES07, REL06, MNT02).
+- Demo site on GitHub Pages: sample flows plus a "paste a flow definition JSON" mode. Make the repo public at this point.
+
+### v1.0: Polish and publish
+- Export the report (Markdown/HTML), docs page per rule, README GIF, accessibility check, Edge Add-ons listing (+ Chrome Web Store if decided).
+
+---
+
+## 11. Risks
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Portal API or hosts change (undocumented) | Extension breaks | All calls in one `api/` module; support both hosts; capture tool records the portal's endpoints; clear error messages |
+| Token expires (60–90 min) | Requests fail | Read `exp` and warn early; detect 401 → banner; pick up new tokens automatically |
+| Service worker stopped while idle | Token lost | Token lives in `chrome.storage.session`, not worker memory |
+| Admin-listed flows can't be read with user endpoints | Missing definitions or runs | Fall back to `scopes/admin` endpoints; mark the flow "not accessible" rather than failing |
+| Throttling while sampling runs | Slow or failed analysis | Concurrency cap, backoff, cache, sample limits |
+| Wrong recommendations (e.g. concurrency with shared state) | User breaks a flow | Guard rules (SPD02/REL01 block SPD01); a confidence value on each finding; "why" text; fixtures for edge cases |
+| Store review over reading auth headers | Listing rejected | Precedent (Power Automate Tools); minimal permissions (no `tabs`); clear privacy policy; read-only |
+| Sensitive data in fixtures or cache | Privacy leak | Anonymise by default; review before committing; clear-cache button; token never stored on disk |
+
+---
+
+## 12. Decisions (2026-09-25)
+1. Name: **Cloud Flow Analyzer**.
+2. Run sampling: 20 runs by default (5–100); at most 500 repetitions per inner loop action per run.
+3. Maintainability: off during v0.x; MNT02 arrives in v0.3.
+4. Distribution: Edge Add-ons + GitHub Releases; Chrome Web Store decided at v1.0.
+5. Licence limits: the user sets their daily request limit (with presets); no built-in numbers.
+6. Flows listed: My flows, Shared with me, solution flows, and all flows in the environment for admins.
+7. Clouds and portals: commercial cloud only; make.powerautomate.com and make.powerapps.com.
+8. Git: assistants commit and push to their working branch; the owner merges.
+9. Repo goes public at v0.3 (needed for free Pages and CodeQL).
+10. Scoring formula as in §5.
+11. Stack: React 19, TypeScript 6.0, plain Vite multi-entry build.
+
+---
+
+## 13. Name check (2026-09-25)
+| Name | npm | GitHub (exact / similar) | Notes |
+|---|---|---|---|
+| **cloud-flow-analyzer** ✅ chosen | free | 0 / 1 (unrelated) | Accurate for a read-only tool |
+| cloud-flow-optimizer | free | 0 / 1 (unrelated) | Catchier, but suggests it changes flows |
+| cloud-flow-inspector | free | 0 / 0 | Alternative |
+| flow-optimizer / flow-analyzer / flow-doctor | free | 3–9 exact matches | Too generic, crowded |
+| flow-inspector | **taken** on npm | 6 exact | Avoid |
+| Cloud Flow Viewer | — | — | Name of an existing tool; avoid "viewer" |
+
+Tagline: *"Cloud Flow Analyzer: speed and resource recommendations for Power Automate cloud flows."* Package scope: `@cfa/core`.
+
+---
+
+## 14. Sources
+- Cloud flow run history in Dataverse: https://learn.microsoft.com/en-us/power-automate/dataverse/cloud-flow-run-metadata
+- Flow Log (flowlog) table: https://learn.microsoft.com/en-us/power-apps/developer/data-platform/reference/entities/flowlog
+- Work with cloud flows using code: https://learn.microsoft.com/en-us/power-automate/manage-flows-with-code
+- Process insights for cloud flows (preview): https://learn.microsoft.com/en-us/power-automate/process-mining-cloud-flow-process-insights
+- Troubleshoot slow-running flows: https://learn.microsoft.com/en-us/troubleshoot/power-platform/power-automate/flow-run-issues/troubleshoot-slow-running-flows
+- Limits and configuration: https://learn.microsoft.com/en-us/power-automate/limits-and-config
+- Coding guidelines: [parallel execution and concurrency](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/implement-parallel-execution) · [avoid anti-patterns](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/avoid-anti-patterns) · [optimise triggers](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/optimize-power-automate-triggers) · [work with relevant data](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/work-with-relevant-data) · [data operations](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/use-data-operations) · [error handling](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/error-handling) · [understand limits](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/understand-limits) · [reusable code (child flows)](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/create-reusable-code)
+- Dataverse trigger (select columns, filter rows): https://learn.microsoft.com/en-us/power-automate/dataverse/create-update-delete-trigger
+- Dataverse list rows: https://learn.microsoft.com/en-us/power-automate/dataverse/list-rows
+- Power Automate performance standards (Matthew Devaney): https://www.matthewdevaney.com/power-automate-coding-standards-for-cloud-flows/power-automate-standards-performance-optimization/
+- Power Automate Tools (token approach, GPL-3): https://github.com/rithala/power-automate-tools
+- FlowLens: https://github.com/Yolostream/FlowLens · powerautomate-lint: https://github.com/verseblocks/powerautomate-lint
+- Flow Studio monitoring: https://awesome-copilot.github.com/skill/flowstudio-power-automate-monitoring/
+- Cloud Flow Viewer: https://rajeevpentyala.com/2025/10/16/new-tool-cloud-flow-viewer-for-power-automate-solutions/

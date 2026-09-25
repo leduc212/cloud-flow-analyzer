@@ -7,5 +7,6 @@ declare class URL {
   readonly hostname: string;
   readonly origin: string;
   readonly pathname: string;
+  readonly hash: string;
   readonly searchParams: Iterable<[string, string]>;
 }

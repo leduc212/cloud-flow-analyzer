@@ -88,3 +88,17 @@ export function flowApi(origin: string) {
 }
 
 export type FlowApi = ReturnType<typeof flowApi>;
+
+/**
+ * Power Platform API host of an environment: the ID without hyphens, lower case, with a dot
+ * before the last two characters, e.g. `default1234…ab.cd.environment.api.powerplatform.com`.
+ */
+export function environmentHost(environment: string): string {
+  const id = environment.replace(/-/g, '').toLowerCase();
+  return `${id.slice(0, -2)}.${id.slice(-2)}.environment.api.powerplatform.com`;
+}
+
+/** Get a flow through the Power Platform API (what the portal itself uses now). */
+export function powerPlatformFlowUrl(environment: string, flowName: string): string {
+  return `https://${environmentHost(environment)}/powerautomate/flows/${e(flowName)}?api-version=1`;
+}

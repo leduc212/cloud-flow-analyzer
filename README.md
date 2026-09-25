@@ -11,13 +11,13 @@ See the [project plan](docs/PLAN.md).
 
 ## What's here
 
-| Path                 | What it is                                                                    |
-| -------------------- | ----------------------------------------------------------------------------- |
-| `packages/core`      | Flow parser, rules, scoring and anonymiser (pure TypeScript, no browser code) |
-| `apps/extension`     | Manifest V3 extension: token capture and the capture tool page                |
-| `fixtures/flows`     | Sample flows used by the tests (a "before" and "after" flow, a solution flow) |
-| `scripts/analyse.ts` | Analyse a flow file or a capture file from the command line                   |
-| `docs/PLAN.md`       | Goals, rule catalogue, architecture, milestones                               |
+| Path                 | What it is                                                                       |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `packages/core`      | Flow parser, rules, scoring and anonymiser (pure TypeScript, no browser code)    |
+| `apps/extension`     | Manifest V3 extension: popup, in-page analysis pane, token capture, capture tool |
+| `fixtures/flows`     | Sample flows used by the tests (a "before" and "after" flow, a solution flow)    |
+| `scripts/analyse.ts` | Analyse a flow file or a capture file from the command line                      |
+| `docs/PLAN.md`       | Goals, rule catalogue, architecture, milestones                                  |
 
 ## Rules in v0.1
 
@@ -39,6 +39,21 @@ See the [project plan](docs/PLAN.md).
 | REL05 | Reliability | Close to the 500-action or 8-level nesting limits               |
 
 Each finding explains why it matters, how to fix it, and shows the better pattern.
+
+## Using it
+
+1. Load the extension (see step 1 and 2 below).
+2. Open a flow in [make.powerautomate.com](https://make.powerautomate.com): its details page or
+   the designer.
+3. Click the extension icon, then **Analyse this flow**. A pane opens on the right with the
+   grade and the findings.
+4. Click an action name in a finding (⌖) to jump to it in the designer. If it's inside a
+   collapsed step, the pane jumps to that step and asks you to expand it.
+5. **How to fix** under each finding explains the better pattern, with a before/after and a link
+   to the Microsoft docs.
+
+If clicking an action doesn't move the designer, open **Designer check** at the bottom of the
+pane, copy it and send it to us.
 
 ## Capture tool (spikes S1–S3)
 
@@ -73,7 +88,7 @@ checked against real flows. It only reads.
 - Captured responses stay in the capture page's memory until you download or clear them.
 
 Permissions: `webRequest` (to read the portal's request headers; it never blocks or changes
-requests), `storage`, and access to the Power Automate API hosts and the maker portals.
+requests), `storage`, `scripting` (to add the analysis pane to the portal page when you ask), and access to the Power Automate API hosts and the maker portals.
 
 ## Development
 

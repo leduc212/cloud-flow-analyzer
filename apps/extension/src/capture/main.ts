@@ -12,7 +12,7 @@ import { ENDPOINTS_KEY, type EndpointRecord } from '../shared/endpoints.ts';
 import { HOST_LABELS, type HostKind } from '../shared/hosts.ts';
 import { TOKEN_KEYS, isExpired, loadTokens, type TokenRecord } from '../shared/token.ts';
 import { buildCaptureFile, captureFlow, type CapturedFlow, type FlowResult } from './capture.ts';
-import { byId, h, setStatus } from './dom.ts';
+import { byId, h, setStatus } from '../shared/dom.ts';
 
 const state = {
   tokens: {} as Partial<Record<HostKind, TokenRecord>>,

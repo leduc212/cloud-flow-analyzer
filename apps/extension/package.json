@@ -6,8 +6,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch --mode development",
+    "build": "vite build && vite build -c vite.content.config.ts",
+    "dev": "vite build --mode development && vite build -c vite.content.config.ts --mode development",
     "icons": "node scripts/make-icons.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -18,6 +18,7 @@
   "devDependencies": {
     "@types/chrome": "^0.3.0",
     "@types/node": "^22.20.4",
+    "jsdom": "^30.1.1",
     "typescript": "~6.0.3",
     "vite": "^8.3.1",
     "vitest": "^5.0.1"

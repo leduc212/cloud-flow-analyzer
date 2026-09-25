@@ -4,11 +4,22 @@
 // the latest bearer token per API in chrome.storage.session (memory only, never on disk). The
 // browser stops this worker when idle, so nothing important lives in module variables.
 // It never blocks or changes requests.
+//
+// It also runs the analysis for the in-page pane: the popup (or the pane's Re-analyse button)
+// asks for a tab to be analysed; the worker injects the pane, fetches the flow with the captured
+// token, analyses it and sends the result to the pane. The page never sees the token.
+import { analyseFlow } from '@cfa/core';
+import { createApiClient } from './api/client.ts';
+import { fetchFlow } from './api/flow-lookup.ts';
+import { parseFlowUrl } from './shared/flow-url.ts';
+import type { BackgroundMessage, ContentMessage } from './shared/messages.ts';
+import { openExtensionPage } from './shared/open-page.ts';
+import { buildPaneResult } from './shared/pane-result.ts';
 import { ENDPOINTS_KEY, addEndpoint, type EndpointRecord } from './shared/endpoints.ts';
 import { API_URL_PATTERNS, hostKind, isPortalOrigin, type HostKind } from './shared/hosts.ts';
-import { TOKEN_KEYS, makeTokenRecord, type TokenRecord } from './shared/token.ts';
+import { TOKEN_KEYS, loadTokens, makeTokenRecord, type TokenRecord } from './shared/token.ts';
 
-const APP_PAGE = 'capture.html';
+const CAPTURE_PAGE = 'capture.html';
 
 /** Last token+origin written per API, to skip storage writes for repeat requests. */
 const lastWritten = new Map<HostKind, string>();
@@ -61,19 +72,40 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders'],
 );
 
-// The toolbar button opens the extension page, or focuses it when it's already open.
-chrome.action.onClicked.addListener(() => {
-  void (async () => {
-    const url = chrome.runtime.getURL(APP_PAGE);
-    const [open] = await chrome.runtime.getContexts({
-      contextTypes: [chrome.runtime.ContextType.TAB],
-      documentUrls: [url],
+async function send(tabId: number, message: ContentMessage): Promise<void> {
+  await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+}
+
+async function analyseTab(tabId: number): Promise<void> {
+  const tab = await chrome.tabs.get(tabId);
+  const ref = parseFlowUrl(tab.url);
+  await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content.js'] });
+  if (!ref) {
+    await send(tabId, {
+      type: 'cfa:error',
+      message: 'Open a flow first (its details page or the designer), then analyse again.',
     });
-    if (open && open.tabId >= 0) {
-      await chrome.tabs.update(open.tabId, { active: true });
-      if (open.windowId >= 0) await chrome.windows.update(open.windowId, { focused: true });
-      return;
-    }
-    await chrome.tabs.create({ url });
-  })();
+    return;
+  }
+  await send(tabId, { type: 'cfa:loading', flowId: ref.flowId });
+  try {
+    const tokens = await loadTokens();
+    const client = createApiClient({ getToken: (kind) => tokens[kind] });
+    const flow = await fetchFlow(client, tokens, ref);
+    await send(tabId, { type: 'cfa:result', result: buildPaneResult(ref, analyseFlow(flow)) });
+  } catch (error) {
+    await send(tabId, {
+      type: 'cfa:error',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender) => {
+  const fail = (error: unknown) => console.error('Cloud Flow Analyzer:', error);
+  if (message.type === 'cfa:analyse-tab') analyseTab(message.tabId).catch(fail);
+  else if (message.type === 'cfa:analyse-sender' && sender.tab?.id !== undefined) {
+    analyseTab(sender.tab.id).catch(fail);
+  } else if (message.type === 'cfa:open-capture') openExtensionPage(CAPTURE_PAGE).catch(fail);
+  return false;
 });

@@ -67,11 +67,20 @@ The two hosts use **different token audiences** (`https://service.flow.microsoft
 ## 3. User experience
 
 ### Flow of use
-1. The user opens make.powerautomate.com (or make.powerapps.com) and signs in as usual.
-2. Clicks the extension icon. A full-page extension tab opens (the "app tab"), or the existing one is focused.
-3. The app tab shows the environment picker (from the captured API) and the **Flows** list.
-4. Picks a flow → **Flow report** (definition analysis, instant) → optional **Analyse runs** (samples the last N runs).
-5. The app reads the token's expiry time. Shortly before it expires (about 60–90 minutes after sign-in), a banner asks the user to keep a portal tab open or refresh it; new tokens are picked up automatically.
+**In the portal (main use, owner request 2026-09-25):**
+1. The user opens a flow in make.powerautomate.com (or make.powerapps.com): its details page or the designer.
+2. Clicks the extension icon. A **popup** offers: **Analyse this flow** (enabled on flow pages) and **Open capture tool** (later: the full app tab).
+3. **Analyse this flow** opens an **analysis pane** on the right of the portal page: grade, category scores, estimated actions per run, and the findings, filterable by severity. Each finding expands to how to fix it, why it matters, before/after and Microsoft docs.
+4. Clicking a finding's action **pans the designer to that action** and highlights it. If the action is inside a collapsed scope, the pane pans to the scope and says to expand it. A "Designer check" in the pane can be copied when the designer can't be found or moved.
+5. When the user opens another flow, the pane offers to analyse it.
+
+**Full app tab (v0.3):**
+1. The app tab shows the environment picker (from the captured API) and the **Flows** list.
+2. Picks a flow → **Flow report** (definition analysis, instant) → optional **Analyse runs** (samples the last N runs).
+
+The extension reads the token's expiry time. Shortly before it expires (about 60–90 minutes after sign-in), it asks the user to keep a portal tab open or refresh it; new tokens are picked up automatically.
+
+**How the pane works:** the popup asks the background worker to analyse the tab. The worker injects the pane (a content script with its UI in a shadow root), fetches the flow with the captured token, analyses it and sends only the result to the pane; the page never sees the token. The new designer is a React Flow canvas (`.react-flow__node[data-id="<action>"]`) that pans by transform, so the pane pans it the way a user does (dragging the empty canvas, then the scroll wheel), measuring after each step until the action is centred; the classic designer scrolls, so `scrollIntoView` is used. It never clicks or edits anything in the designer.
 
 ### Screens
 ```
@@ -282,7 +291,7 @@ Confirmed against a real tenant (commercial cloud, 6 environments, 61 flows):
 - **Read-only:** only GET requests to the Power Automate API. Never create, update or delete flows. The API module refuses other methods and any host outside the two API host patterns.
 - **Token:** kept in `chrome.storage.session` only (memory, never on disk, not IndexedDB, not `chrome.storage.local`). Never logged, never included in a capture file, never sent to a host of the other kind.
 - **No outside calls:** no analytics, telemetry or remote code. The default MV3 Content Security Policy blocks remote scripts.
-- **Minimal permissions:** `webRequest` (read headers only, no blocking) and `storage`. Host permissions: `*.api.flow.microsoft.com`, `*.api.powerplatform.com`, and the maker portals (MV3 needs host access to a request's initiator as well as its URL). No `tabs` permission, which would add a "Read your browsing history" warning.
+- **Minimal permissions:** `webRequest` (read headers only, no blocking), `storage`, and `scripting` (to add the analysis pane to a portal tab when the user asks; no warning). Host permissions: `*.api.flow.microsoft.com`, `*.api.powerplatform.com`, and the maker portals (MV3 needs host access to a request's initiator as well as its URL). No `tabs` permission, which would add a "Read your browsing history" warning.
 - **Cache data:** flow definitions can contain sensitive values, so offer a "Clear cache" button and state in the README what's stored locally.
 - **Fixtures and capture files:** the capture tool anonymises by default: IDs, emails, URLs, names and literal input values are replaced; `inputsLink`/`outputsLink` (signed URLs) are removed; expressions are kept. Files must be reviewed before they're committed.
 

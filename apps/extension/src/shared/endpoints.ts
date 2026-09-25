@@ -33,7 +33,8 @@ const SEARCH_FILTER = /^search\('\w+'\)$/;
 export function normaliseHost(host: string): string {
   return host
     .toLowerCase()
-    .replace(/^[a-z0-9]+\.[a-z0-9]{2}(?=\.environment\.api\.powerplatform\.com$)/, '{env}');
+    .replace(/^[a-z0-9]+\.[a-z0-9]{2}(?=\.environment\.api\.powerplatform\.com$)/, '{env}')
+    .replace(/^[a-z0-9]+\.[a-z0-9]{2}(?=\.tenant\.api\.powerplatform\.com$)/, '{tenant}');
 }
 
 export function normalisePath(path: string): string {

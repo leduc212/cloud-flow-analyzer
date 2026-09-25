@@ -64,6 +64,8 @@ export interface ActionNode {
   loopItemRefs: string[];
   /** Uses `item()` (the current item of the nearest loop). */
   usesItem: boolean;
+  /** Variables this action reads (`variables('x')`). */
+  variableRefs: string[];
   /** Target variable of a variable write. */
   variable?: string;
   /** Variables declared by an `InitializeVariable` action. */

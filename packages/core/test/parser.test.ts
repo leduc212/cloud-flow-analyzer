@@ -10,7 +10,7 @@ import {
   parseFlow,
 } from '../src/parser.ts';
 import { resolveConnector } from '../src/connectors.ts';
-import { scanReferences } from '../src/expressions.ts';
+import { hasUnreadableReferences, scanReferences } from '../src/expressions.ts';
 import { compose, condition, dataverse, flow, foreach, scope, until } from './builders.ts';
 
 describe('readFlow', () => {
@@ -200,6 +200,12 @@ describe('scanReferences', () => {
     expect(refs.loopItems).toEqual(['Apply_to_each']);
     expect(refs.variables).toEqual(['prefix']);
     expect(refs.usesItem).toBe(true);
+  });
+
+  it('spots references it cannot read', () => {
+    expect(hasUnreadableReferences("@{items('Loop'<v>'x']}")).toBe(true);
+    expect(hasUnreadableReferences("@{items('Loop')?['x']} @{variables('v')}")).toBe(false);
+    expect(hasUnreadableReferences('plain text')).toBe(false);
   });
 
   it('ignores plain text', () => {

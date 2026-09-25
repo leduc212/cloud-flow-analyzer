@@ -118,7 +118,7 @@ describe('SPD01 loop runs one item at a time', () => {
 });
 
 describe('SPD02 variable written inside a loop', () => {
-  it('flags appends and increments with a matching fix', () => {
+  it('reports each loop once, listing its writes', () => {
     const result = findings(
       flow({
         L: foreach(LIST, {
@@ -128,13 +128,21 @@ describe('SPD02 variable written inside a loop', () => {
       }),
       'SPD02',
     );
-    expect(result.map((f) => f.target.name)).toEqual(['Append', 'Count']);
-    expect(result[0]?.fix).toContain('Select');
-    expect(result[1]?.fix).toContain('length(');
+    expect(result).toHaveLength(1);
+    expect(result[0]?.target.name).toBe('L');
+    expect(result[0]?.message).toContain('variables "names", "n"');
   });
 
-  it('downgrades writes whose value comes from a call in the loop', () => {
+  it('gives the matching fix when all writes are the same kind', () => {
     const [finding] = findings(
+      flow({ L: foreach(LIST, { Count: variable('IncrementVariable', 'n', 1) }) }),
+      'SPD02',
+    );
+    expect(finding?.fix).toContain('length(');
+  });
+
+  it('skips writes whose value comes from a call in the loop', () => {
+    const result = findings(
       flow({
         L: foreach(LIST, {
           Create: dataverse('CreateRecord'),
@@ -145,7 +153,7 @@ describe('SPD02 variable written inside a loop', () => {
       }),
       'SPD02',
     );
-    expect(finding?.severity).toBe('low');
+    expect(result).toEqual([]);
   });
 
   it('leaves writes outside loops, inside Do until and in parallel loops (REL01) alone', () => {
@@ -195,13 +203,50 @@ describe('SPD03 per-item reads', () => {
     expect(finding?.confidence).toBe(0.5);
   });
 
-  it('ignores writes, list queries not using the item, and reads outside loops', () => {
+  it('flags queries that change per item through variables or actions in the loop', () => {
+    const viaVariable = findings(
+      flow({
+        L: foreach(LIST, {
+          Set: variable('SetVariable', 'code', "@items('L')?['code']"),
+          Q: dataverse(
+            'ListRecords',
+            { $filter: "code eq '@{variables('code')}'" },
+            { Set: ['Succeeded'] },
+          ),
+        }),
+      }),
+      'SPD03',
+    );
+    expect(viaVariable[0]?.message).toContain('N+1');
+    const viaAction = findings(
+      flow({
+        L: foreach(LIST, {
+          Add: dataverse('CreateRecord'),
+          Q: dataverse(
+            'ListRecords',
+            { $filter: "name eq '@{outputs('Add')?['body/name']}'" },
+            { Add: ['Succeeded'] },
+          ),
+        }),
+      }),
+      'SPD03',
+    );
+    expect(viaAction[0]?.message).toContain('N+1');
+  });
+
+  it('flags the same query repeated on every item', () => {
+    const [finding] = findings(
+      flow({ L: foreach(LIST, { Q: dataverse('ListRecords', { $top: 5 }) }) }),
+      'SPD03',
+    );
+    expect(finding?.message).toContain('runs the same query');
+    expect(finding?.fix).toContain('once, before the loop');
+  });
+
+  it('ignores writes, reads outside loops and non-GET HTTP calls', () => {
     expect(findings(flow({ L: foreach(LIST, { U: dataverse('UpdateRecord') }) }), 'SPD03')).toEqual(
       [],
     );
-    expect(
-      findings(flow({ L: foreach(LIST, { Q: dataverse('ListRecords', { $top: 5 }) }) }), 'SPD03'),
-    ).toEqual([]);
     expect(findings(flow({ G: dataverse('GetItem') }), 'SPD03')).toEqual([]);
     expect(findings(flow({ L: foreach(LIST, { P: http('POST', '@{item()}') }) }), 'SPD03')).toEqual(
       [],
@@ -210,6 +255,10 @@ describe('SPD03 per-item reads', () => {
 });
 
 describe('SPD04 / SPD07 / SPD08 / SPD10', () => {
+  it('SPD04 ignores empty inner loops', () => {
+    expect(findings(flow({ O: foreach(LIST, { I: foreach('@x', {}) }) }), 'SPD04')).toEqual([]);
+  });
+
   it('SPD04 flags nested loops, medium only when the inner loop makes calls', () => {
     const quiet = findings(
       flow({ O: foreach(LIST, { I: foreach('@x', { C: compose(1) }) }) }),
@@ -340,8 +389,28 @@ describe('RES04 list query reads too much', () => {
 });
 
 describe('REL01 parallel loop writes variables', () => {
-  it('flags the loop once with every variable', () => {
+  it('flags Set variable as a race, once per loop', () => {
     const [finding, ...rest] = findings(
+      flow({
+        L: foreach(
+          LIST,
+          {
+            A: variable('SetVariable', 'code', 1),
+            B: variable('SetVariable', 'name', 1, { A: ['Succeeded'] }),
+          },
+          { concurrency: 20 },
+        ),
+      }),
+      'REL01',
+    );
+    expect(rest).toEqual([]);
+    expect(finding?.severity).toBe('high');
+    expect(finding?.message).toContain('"code", "name"');
+    expect(finding?.message).toContain('up to 20');
+  });
+
+  it('treats appends and increments as safe but unordered', () => {
+    const [finding] = findings(
       flow({
         L: foreach(
           LIST,
@@ -354,9 +423,8 @@ describe('REL01 parallel loop writes variables', () => {
       }),
       'REL01',
     );
-    expect(rest).toEqual([]);
-    expect(finding?.message).toContain('"names", "count"');
-    expect(finding?.message).toContain('up to 20');
+    expect(finding?.severity).toBe('low');
+    expect(finding?.message).toContain('order of the values is random');
   });
 });
 

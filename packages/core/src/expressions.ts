@@ -51,3 +51,20 @@ export function scanReferences(value: unknown): References {
     variables: [...variables],
   };
 }
+
+const LOOSE_CALL =
+  /\b(?:body|outputs|actions|actionBody|actionOutputs|result|iterationIndexes|items|variables)\s*\(/g;
+const STRICT_CALL = new RegExp(
+  `${ACTION_REF.source}|${LOOP_ITEM_REF.source}|${VARIABLE_REF.source}`,
+  'g',
+);
+
+/**
+ * True when a value mentions a reference function whose argument can't be read (not a plain
+ * quoted name), so the references found by `scanReferences` may be incomplete.
+ */
+export function hasUnreadableReferences(value: unknown): boolean {
+  return collectStrings(value).some(
+    (text) => (text.match(LOOSE_CALL)?.length ?? 0) > (text.match(STRICT_CALL)?.length ?? 0),
+  );
+}

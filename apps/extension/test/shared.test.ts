@@ -97,6 +97,16 @@ describe('endpoints', () => {
     );
   });
 
+  it('hides tenant hosts', () => {
+    const { host } = endpointKey(
+      'GET',
+      new URL(
+        'https://0123456789abcdef0123456789abcd.05.tenant.api.powerplatform.com/powerapps/features',
+      ),
+    );
+    expect(host).toBe('{tenant}.tenant.api.powerplatform.com');
+  });
+
   it('counts repeats and stops adding new endpoints when full', () => {
     const table = {};
     const url = new URL('https://api.flow.microsoft.com/a?api-version=1');

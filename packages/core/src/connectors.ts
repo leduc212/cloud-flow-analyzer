@@ -35,11 +35,6 @@ export const LIST_OPERATIONS: Record<string, Record<string, ListOperation>> = {
   },
   [SHAREPOINT]: {
     GetItems: { label: 'Get items', filterParams: ['$filter'], topParams: ['$top'] },
-    GetFileItems: {
-      label: 'Get files (properties only)',
-      filterParams: ['$filter'],
-      topParams: ['$top'],
-    },
   },
   [SQL]: {
     GetItems_V2: {

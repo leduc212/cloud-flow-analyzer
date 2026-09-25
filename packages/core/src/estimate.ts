@@ -1,4 +1,4 @@
-import { singleRowSource } from './parser.ts';
+import { enclosingLoops, singleRowSource } from './parser.ts';
 import type { ActionNode, FlowTree } from './types.ts';
 
 export interface EstimateOptions {
@@ -18,6 +18,8 @@ export interface ActionEstimate {
 }
 
 export const DEFAULT_FOREACH_ITERATIONS = 50;
+/** Iterations assumed for an Apply to each nested inside another loop. */
+export const DEFAULT_NESTED_ITERATIONS = 5;
 export const DEFAULT_UNTIL_ITERATIONS = 10;
 
 /**
@@ -35,9 +37,9 @@ export function estimateActionsPerRun(
     if (measured !== undefined) return measured;
     if (loop.kind === 'foreach' && singleRowSource(tree, loop)) return 1;
     assumed = true;
-    return loop.kind === 'until'
-      ? (options.untilIterations ?? DEFAULT_UNTIL_ITERATIONS)
-      : (options.foreachIterations ?? DEFAULT_FOREACH_ITERATIONS);
+    if (loop.kind === 'until') return options.untilIterations ?? DEFAULT_UNTIL_ITERATIONS;
+    if (enclosingLoops(tree, loop).length > 0) return DEFAULT_NESTED_ITERATIONS;
+    return options.foreachIterations ?? DEFAULT_FOREACH_ITERATIONS;
   };
 
   const countList = (nodes: ActionNode[]): number =>

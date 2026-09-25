@@ -3,7 +3,7 @@
 > **Speed and resource recommendations for Power Automate cloud flows, right in your browser.**
 > A browser extension (Edge/Chrome) that reads your flows and their recent runs, finds slow or wasteful patterns, and tells you how to fix them.
 
-Status: M0 (spikes) · Drafted 2026-09-25 · Revised 2026-09-25 after review and owner decisions (see §12) · Owner: LEMD (leduc212)
+Status: M0 (spikes: S1 and S2 done, S3 needs 20+ flows) · Drafted 2026-09-25 · Revised 2026-09-25 after review and owner decisions (see §12) · Owner: LEMD (leduc212)
 
 ---
 
@@ -252,15 +252,17 @@ type ActionRunStats = { path: string[]; samples: number; p50Ms: number; p95Ms: n
 - Child flow: `type: Workflow`. Variables: `InitializeVariable`, `SetVariable`, `AppendToArrayVariable`, `IncrementVariable`…
 - Handle expressions (`@{…}`, `@body('X')`) as strings. A simple reference extractor finds `body('…')`, `outputs('…')`, `actions('…')`, `items('…')`, `item()` and `variables('…')`.
 
-### Power Automate API (confirm in spike S1)
-Based on the Logic Apps-style API the portal uses; exact paths and api-versions must be checked against the live portal (the capture tool records every endpoint the portal calls):
-- Environments: `…/providers/Microsoft.ProcessSimple/environments`
-- Flows: `…/environments/{env}/flows` (My flows), `…/flows?$filter=search('team')` (Shared with me), `…/scopes/admin/environments/{env}/v2/flows` (admins: all flows)
-- Get flow with definition: `…/flows/{flowId}` (check whether an `$expand` is needed; admin-listed flows may need the `scopes/admin` path)
-- Runs: `…/flows/{flowId}/runs?$top=N`
-- Run actions: `…/flows/{flowId}/runs/{runId}/actions`
-- Loop repetitions: `…/runs/{runId}/actions/{actionName}/repetitions`, called for each action **inside** a loop, paged
-- Retry info: action results may include `retryHistory`
+### Power Automate API (S1/S2 findings, capture of 2026-09-25)
+Confirmed against a real tenant (commercial cloud, 6 environments, 61 flows):
+- **Two APIs, both work.** The portal now does almost everything through the Power Platform API (`https://{env}.environment.api.powerplatform.com/powerautomate/…?api-version=1`, token audience `https://api.powerplatform.com/`); it only calls `api.flow.microsoft.com` (api-version `2020-06-01`) for environment permissions. The older API (`api.flow.microsoft.com/providers/Microsoft.ProcessSimple/…`, api-version `2016-11-01`) still answered every call we made. v0.1 keeps the older API (known shapes, one host) and adds the Power Platform API as the fallback; both live in `api/`.
+- Environments: `…/providers/Microsoft.ProcessSimple/environments` ✅
+- Flows: `…/environments/{env}/flows` (default list: 49 flows) ✅ and `…/scopes/admin/environments/{env}/v2/flows` (admin: 58 flows) ✅. Together they gave 61 distinct flows, so the app merges both. `search('personal')` / `search('team')` not yet tested.
+- The flow list already contains `properties.definitionSummary`: every action's `type`, `swaggerOperationId` and connector (`api.name`). Good enough to pre-screen flows for "Analyse all" without fetching each definition.
+- Get flow: `…/flows/{flowId}` returns `properties.definition` and `connectionReferences` with no `$expand` ✅. Also has `workflowEntityId`, `isManaged`, `creator`.
+- Runs: `…/flows/{flowId}/runs?$top=N` ✅. Each run has `startTime`, `endTime`, `status`, `code` (e.g. `Terminated`), and trigger timings.
+- Run actions: `…/runs/{runId}/actions` ✅, **paged at 100** (`nextLink`). Each action has only `startTime`, `endTime`, `status`, `code`, `error`, `correlation`: **no iteration count and no `retryHistory`** in the list.
+- Loop repetitions: `…/runs/{runId}/actions/{actionName}/repetitions` ✅, one entry per iteration with `repetitionIndexes` (`scopeName`, `itemIndex`) and start/end times. This is the only source of loop iteration counts and per-iteration timings.
+- The portal's own run history uses `…/powerautomate/flows/{id}/runs` and `…/triggers/{name}/histories` on the Power Platform API.
 
 ---
 

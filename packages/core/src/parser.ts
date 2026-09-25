@@ -168,6 +168,7 @@ function parseAction(name: string, raw: JsonObject, at: Position, ctx: ParseCont
     references: refs.actions,
     loopItemRefs: refs.loopItems,
     usesItem: refs.usesItem,
+    variableRefs: refs.variables,
   };
 
   if (kind === 'connector') {

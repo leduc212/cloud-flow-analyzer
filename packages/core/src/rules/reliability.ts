@@ -8,7 +8,7 @@ export const REL01: Rule = {
   severity: 'high',
   confidence: 0.95,
   title: 'Parallel loop writes to variables',
-  why: "Variables are shared by all items of a loop. When the loop runs items in parallel, they overwrite each other's values, so the results are wrong in ways that are hard to spot.",
+  why: 'Variables are shared by all items of a loop. When the loop runs items in parallel, Set variable in one item overwrites the value another item is still using, so results are wrong in ways that are hard to spot. Appends and increments are safe but happen in random order.',
   fix: 'Replace the variable writes with data operations (Select, Filter array, a Compose inside the loop), or turn concurrency off for this loop.',
   example: {
     before: 'Apply to each  (concurrency 20)\n  └ Increment variable  Count',
@@ -23,11 +23,28 @@ export const REL01: Rule = {
       if (enclosingLoops(tree, loop).length > 0) continue;
       const writes = descendants(loop).filter((n) => n.kind === 'variable-write');
       if (writes.length === 0) continue;
-      const variables = [...new Set(writes.map((n) => n.variable ?? n.name))].map((v) => `"${v}"`);
-      matches.push({
-        target: actionTarget(loop),
-        message: `${q(loop.name)} runs up to ${loop.settings.concurrency} items in parallel and writes ${variables.length === 1 ? 'variable' : 'variables'} ${variables.join(', ')} inside. Parallel items overwrite each other's values.`,
-      });
+      const list = (nodes: ActionNode[]) => {
+        const variables = [...new Set(nodes.map((n) => `"${n.variable ?? n.name}"`))];
+        return `${variables.length === 1 ? 'variable' : 'variables'} ${variables.join(', ')}`;
+      };
+      const parallel = `${q(loop.name)} runs up to ${loop.settings.concurrency} items in parallel`;
+      // Set variable is a real race. Appends and increments are applied one at a time, but in
+      // no particular order.
+      const sets = writes.filter((n) => n.type.toLowerCase() === 'setvariable');
+      if (sets.length > 0) {
+        matches.push({
+          target: actionTarget(loop),
+          message: `${parallel} and sets ${list(sets)} inside. Parallel items overwrite each other's values.`,
+        });
+      } else {
+        matches.push({
+          target: actionTarget(loop),
+          message: `${parallel} and appends to ${list(writes)}. Nothing is lost, but the order of the values is random.`,
+          severity: 'low',
+          confidence: 0.6,
+          fix: 'If the order matters, sort the result after the loop (sort() on a key) or turn concurrency off. Otherwise no change is needed.',
+        });
+      }
     }
     return matches;
   },

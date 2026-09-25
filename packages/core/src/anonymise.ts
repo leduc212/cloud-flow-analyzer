@@ -71,7 +71,7 @@ const STRUCTURAL_KEYS = new Set([
 ]);
 const QUERY_KEYS = new Set(['$filter', 'fetchXml', 'subscriptionRequest/filterexpression']);
 const KEEP_HOSTS = [
-  /(^|\.)api\.flow\.microsoft\.com$/i,
+  /(^|\.)flow\.microsoft\.com$/i,
   /(^|\.)api\.powerplatform\.com$/i,
   /(^|\.)schema\.management\.azure\.com$/i,
   /(^|\.)logic\.azure\.com$/i,
@@ -82,13 +82,15 @@ const KEEP_QUERY_PARAMS = new Set(['api-version', '$top', '$expand', '$filter', 
 const REFERENCE_FUNCTIONS =
   /^(body|outputs|actions|actionBody|actionOutputs|result|items|iterationIndexes|variables|parameters|triggerOutputs|triggerBody|workflow)\($/i;
 
-const ENV_HOST = String.raw`\b([a-z0-9]+\.[a-z0-9]{2})(?=\.environment\.api\.powerplatform\.com)`;
+const ENV_HOST = String.raw`\b([a-z0-9]+\.[a-z0-9]{2})(?=\.(?:environment|tenant)\.api\.powerplatform\.com)`;
 const EMAIL = String.raw`[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`;
 const URL_PATTERN = String.raw`https?://[^\s'"<>(){}\[\]\\]+`;
 const GUID = String.raw`(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])`;
 const HEX32 = String.raw`(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])`;
 const TOKEN = new RegExp(`(${URL_PATTERN})|(${EMAIL})|${ENV_HOST}|(${GUID})|(${HEX32})`, 'gi');
 const IDS = new RegExp(`${ENV_HOST}|(${GUID})|(${HEX32})`, 'gi');
+
+const INTERPOLATION = /@\{((?:[^{}']|'(?:[^']|'')*')*)\}/g;
 
 type Zone = 'none' | 'values';
 
@@ -204,42 +206,67 @@ export function createAnonymiser(): Anonymiser {
       },
     );
 
-  const queryLiterals = (query: string): string =>
-    query
+  /**
+   * Splits text around `@{…}` interpolations, mapping the plain text and the expressions
+   * separately, so expressions inside filters and messages survive intact.
+   */
+  const mapInterpolated = (
+    value: string,
+    outside: (text: string) => string,
+    inside: (expression: string) => string,
+  ): string => {
+    const parts: string[] = [];
+    let last = 0;
+    for (const m of value.matchAll(INTERPOLATION)) {
+      if (m.index > last) parts.push(outside(value.slice(last, m.index)));
+      parts.push(`@{${inside(m[1] ?? '')}}`);
+      last = m.index + m[0].length;
+    }
+    if (last < value.length) parts.push(outside(value.slice(last)));
+    return parts.join('');
+  };
+
+  const expression = (value: string): string => expressionLiterals(text(value));
+
+  /** Replaces literals in a query (OData filter, FetchXML), keeping embedded expressions. */
+  const queryLiterals = (query: string): string => {
+    if (query.startsWith('@') && !query.startsWith('@{')) return expression(query);
+    // Mask expressions first so quotes around and between them can't be misread as literals.
+    const expressions: string[] = [];
+    const masked = query.replace(INTERPOLATION, (_match, inner: string) => {
+      expressions.push(inner);
+      return `\uE000${expressions.length - 1}\uE000`;
+    });
+    return text(masked)
       .replace(/'((?:[^']|'')+)'/g, (match, literal: string) =>
-        literal.startsWith('@') ? match : `'<v>'`,
+        literal.includes('\uE000') ? match : "'<v>'",
       )
       .replace(/(value|uiname)="[^"]*"/gi, '$1="<v>"')
-      .replace(/<value>[^<]*<\/value>/gi, '<value><v></value>');
+      .replace(/<value>[^<]*<\/value>/gi, '<value><v></value>')
+      .replace(
+        /\uE000(\d+)\uE000/g,
+        (_match, index: string) => `@{${expression(expressions[Number(index)] ?? '')}}`,
+      );
+  };
 
   const dataValue = (value: string): string => {
     if (value.trim() === '') return value;
-    if (value.startsWith('@') && !value.startsWith('@{')) return expressionLiterals(text(value));
-    if (value.includes('@{')) {
-      // Text with interpolated expressions: keep the expressions, replace the text around them.
-      const parts: string[] = [];
-      let last = 0;
-      for (const m of value.matchAll(/@\{((?:[^{}']|'(?:[^']|'')*')*)\}/g)) {
-        if (m.index > last) parts.push('<text>');
-        parts.push(`@{${expressionLiterals(text(m[1] ?? ''))}}`);
-        last = m.index + m[0].length;
-      }
-      if (last < value.length) parts.push('<text>');
-      return parts.join('');
-    }
+    if (value.startsWith('@') && !value.startsWith('@{')) return expression(value);
+    // Text with interpolated expressions: keep the expressions, replace the text around them.
+    if (value.includes('@{')) return mapInterpolated(value, () => '<text>', expression);
     return '<value>';
   };
 
   const walkString = (value: string, key: string | undefined, zone: Zone): string => {
     if (key !== undefined && NAME_KEYS.has(key)) return value.trim() ? fakeName(value) : value;
     if (key !== undefined && TEXT_KEYS.has(key)) return value.trim() ? '<text>' : value;
-    if (key !== undefined && QUERY_KEYS.has(key)) return queryLiterals(text(value));
+    if (key !== undefined && QUERY_KEYS.has(key)) return queryLiterals(value);
     if (zone === 'values') {
       const structural =
         key !== undefined &&
         (STRUCTURAL_KEYS.has(key) || key.startsWith('$') || key.startsWith('subscriptionRequest/'));
       if (!structural) return dataValue(value);
-      return value.startsWith('@') ? expressionLiterals(text(value)) : text(value);
+      return value.startsWith('@') ? expression(value) : text(value);
     }
     return text(value);
   };

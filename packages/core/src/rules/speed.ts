@@ -7,6 +7,7 @@ import {
   singleReadOperation,
 } from '../connectors.ts';
 import { descendants, enclosingLoops, isConcurrentLoop, singleRowSource } from '../parser.ts';
+import { hasUnreadableReferences } from '../expressions.ts';
 import type { ActionNode, FlowTree } from '../types.ts';
 import { DOCS, actionTarget, isIo, plural, q, type Rule, type RuleMatch } from './rule.ts';
 
@@ -15,6 +16,25 @@ export function runsInParallel(tree: FlowTree, node: ActionNode): boolean {
   const loops = enclosingLoops(tree, node);
   const outermost = loops[loops.length - 1];
   return outermost !== undefined && isConcurrentLoop(outermost);
+}
+
+/**
+ * True when an action's inputs change from one loop item to the next: they use the loop item,
+ * the output of another action inside the loop, or a variable written inside the loop.
+ */
+export function dependsOnIteration(tree: FlowTree, node: ActionNode): boolean {
+  const loops = enclosingLoops(tree, node);
+  const outermost = loops[loops.length - 1];
+  if (!outermost) return false;
+  if (node.usesItem || node.loopItemRefs.length > 0) return true;
+  // If some references can't be read or point nowhere, don't claim the inputs are the same on every item.
+  if (hasUnreadableReferences(node.inputs)) return true;
+  if (node.references.some((name) => !tree.byName.has(name))) return true;
+  const inside = descendants(outermost);
+  const insideNames = new Set(inside.map((n) => n.name));
+  if (node.references.some((name) => insideNames.has(name))) return true;
+  const written = new Set(inside.filter((n) => n.kind === 'variable-write').map((n) => n.variable));
+  return node.variableRefs.some((name) => written.has(name));
 }
 
 function names(nodes: ActionNode[], max = 3): string {
@@ -97,36 +117,34 @@ export const SPD02: Rule = {
   },
   docs: [DOCS.dataOperations, DOCS.parallel],
   check({ tree }) {
-    const matches: RuleMatch[] = [];
+    // One finding per loop, listing the writes a data operation could replace.
+    const byLoop = new Map<ActionNode, ActionNode[]>();
     for (const node of tree.all) {
       if (node.kind !== 'variable-write') continue;
       const loops = enclosingLoops(tree, node);
       const loop = loops[0];
       // In a parallel loop this is a race condition, reported by REL01.
       if (!loop || runsInParallel(tree, node)) continue;
-      const variable = node.variable ? `"${node.variable}"` : 'a variable';
+      // A value that comes from a call made in the loop can't be built with Select.
       const outermost = loops[loops.length - 1] ?? loop;
       const loopCalls = new Set(
         descendants(outermost)
           .filter(isIo)
           .map((n) => n.name),
       );
-      const fromCall = node.references.some((name) => loopCalls.has(name));
-      const base = `${q(node.name)} writes ${variable} once for every item of ${q(loop.name)}.`;
-      if (fromCall) {
-        matches.push({
-          target: actionTarget(node),
-          message: `${base} The value comes from a call made in the loop.`,
-          severity: 'low',
-          confidence: 0.4,
-          fix: "If that call is a read, replace it with one bulk query before the loop (see SPD03) and build the result with Select. Otherwise keep the variable, but the loop then can't safely run in parallel.",
-        });
-        continue;
-      }
-      const fix = VARIABLE_FIX[node.type.toLowerCase()];
-      matches.push({ target: actionTarget(node), message: base, ...(fix ? { fix } : {}) });
+      if (node.references.some((name) => loopCalls.has(name))) continue;
+      byLoop.set(loop, [...(byLoop.get(loop) ?? []), node]);
     }
-    return matches;
+    return [...byLoop].map(([loop, writes]): RuleMatch => {
+      const variables = [...new Set(writes.map((w) => `"${w.variable ?? w.name}"`))];
+      const types = new Set(writes.map((w) => w.type.toLowerCase()));
+      const fix = types.size === 1 ? VARIABLE_FIX[[...types][0] ?? ''] : undefined;
+      return {
+        target: actionTarget(loop),
+        message: `${q(loop.name)} writes ${variables.length === 1 ? 'variable' : 'variables'} ${variables.join(', ')} on every item (${names(writes)}).`,
+        ...(fix ? { fix } : {}),
+      };
+    });
   },
 };
 
@@ -161,24 +179,31 @@ export const SPD03: Rule = {
       if (node.kind !== 'connector' && node.kind !== 'http') continue;
       const loop = enclosingLoops(tree, node)[0];
       if (!loop) continue;
-      const usesItem = node.usesItem || node.loopItemRefs.length > 0;
+      const perItem = dependsOnIteration(tree, node);
       const single = singleReadOperation(node.connector, node.operationId);
       const list = listOperation(node.connector, node.operationId);
       const what = `${q(node.name)} (${connectorName(node.connector)} ${single ?? list?.label ?? ''})`;
       const fix = node.connector ? PER_ITEM_READ_FIX[node.connector] : undefined;
       const common = { target: actionTarget(node), ...(fix ? { fix } : {}) };
-      if (single) {
+      if ((single || list) && !perItem) {
+        matches.push({
+          target: actionTarget(node),
+          message: `${what} runs the same query for every item of ${q(loop.name)}: nothing in it changes from one item to the next.`,
+          fix: 'Run the query once, before the loop, and use its result inside the loop. Keep it inside only if the loop itself changes the data it reads.',
+          confidence: 0.6,
+        });
+      } else if (single) {
         matches.push({
           ...common,
           message: `${what} runs once for every item of ${q(loop.name)}.`,
-          confidence: usesItem ? 0.9 : 0.75,
+          confidence: 0.9,
         });
-      } else if (list && usesItem) {
+      } else if (list) {
         matches.push({
           ...common,
           message: `${what} runs a separate query for every item of ${q(loop.name)} (N+1 queries).`,
         });
-      } else if (usesItem && (node.method ?? (node.kind === 'http' ? 'get' : '')) === 'get') {
+      } else if (perItem && (node.method ?? (node.kind === 'http' ? 'get' : '')) === 'get') {
         matches.push({
           ...common,
           message: `${q(node.name)} makes a GET request for every item of ${q(loop.name)}. If the API can return many records in one call, use that before the loop instead.`,
@@ -213,6 +238,7 @@ export const SPD04: Rule = {
       const outer = enclosingLoops(tree, loop)[0];
       if (!outer) continue;
       const inner = descendants(loop);
+      if (inner.length === 0) continue;
       matches.push({
         target: actionTarget(loop),
         message: `${q(loop.name)} is inside ${q(outer.name)}. It always runs one item at a time, and its ${plural(inner.length, 'action')} ${inner.length === 1 ? 'runs' : 'run'} for every outer item × inner item.`,

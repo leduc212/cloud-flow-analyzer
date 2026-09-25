@@ -55,6 +55,28 @@ describe('anonymise', () => {
     ).toBe('https://envhost1.xx.environment.api.powerplatform.com/powerautomate/flows');
   });
 
+  it('keeps expressions inside filters intact', () => {
+    const out = anonymise({
+      inputs: {
+        parameters: {
+          $filter:
+            "status eq 'Open' and name eq '@{items('Apply_to_each_5')?['Customer Name']}' and code eq '@{outputs('Add_a_new_PO')?['body/code']}'",
+        },
+      },
+    }) as { inputs: { parameters: { $filter: string } } };
+    expect(out.inputs.parameters.$filter).toBe(
+      "status eq '<v>' and name eq '@{items('Apply_to_each_5')?['Customer Name']}' and code eq '@{outputs('Add_a_new_PO')?['body/code']}'",
+    );
+  });
+
+  it('hides tenant hosts', () => {
+    expect(
+      createAnonymiser().text(
+        'https://0123456789abcdef0123456789abcd.05.tenant.api.powerplatform.com/x',
+      ),
+    ).toBe('https://envhost1.xx.tenant.api.powerplatform.com/x');
+  });
+
   it('replaces other hosts and paths', () => {
     const anonymiser = createAnonymiser();
     expect(

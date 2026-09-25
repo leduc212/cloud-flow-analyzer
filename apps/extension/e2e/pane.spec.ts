@@ -170,6 +170,68 @@ test('dismisses findings, rescoring and remembering them, and copies a report', 
   expect(report).not.toContain('REL02');
 });
 
+test('reads recent runs, rescores with them and jumps to the busiest loop', async ({
+  openPortal,
+  mockApi,
+  analyse,
+}) => {
+  const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1000).toISOString();
+  const step = (name: string, start: number, end: number) => ({
+    name,
+    properties: { status: 'Succeeded', startTime: at(start), endTime: at(end) },
+  });
+  const repetitions = {
+    value: Array.from({ length: 12 }, (_, i) => ({
+      properties: {
+        repetitionIndexes: [{ scopeName: 'Apply_to_each', itemIndex: i }],
+        status: 'Succeeded',
+        startTime: at(1 + i * 0.5),
+        endTime: at(1.2 + i * 0.5),
+      },
+    })),
+  };
+  await mockApi({
+    [`/flows/${FLOW}`]: bad,
+    '/runs': {
+      value: [
+        { name: 'r1', properties: { status: 'Succeeded', startTime: at(0), endTime: at(10) } },
+      ],
+    },
+    '/runs/r1/actions': { value: [step('List_accounts', 0, 1), step('Apply_to_each', 1, 9)] },
+    '/runs/r1/actions/Get_primary_contact/repetitions': repetitions,
+    '/runs/r1/actions/Update_account/repetitions': repetitions,
+  });
+  const items: DesignerItem[] = [
+    { id: 'When_a_row_is_added,_modified_or_deleted' },
+    { id: 'List_accounts' },
+    { id: 'Apply_to_each', container: true, collapsed: false },
+    { id: 'Get_primary_contact', depth: 1, parent: 'Apply_to_each' },
+    { id: 'Update_account', depth: 1, parent: 'Apply_to_each' },
+  ];
+  const portal = await openPortal(designerPage(items, TOKEN));
+  await analyse(portal);
+  await expect(portal.locator('#cfa-pane-host .finding').first()).toBeVisible({ timeout: 15_000 });
+
+  await portal.locator('#cfa-pane-host .runs-button', { hasText: 'Analyse recent runs' }).click();
+  await expect
+    .poll(() => paneText(portal, '.runs summary'), { timeout: 15_000 })
+    .toBe('Recent runs · 1 · median 10.0 s');
+  expect(await paneText(portal, '.runs')).toContain('12 items (max 12)');
+  const spd01 = portal.locator('#cfa-pane-host .finding', {
+    hasText: 'Loop runs one item at a time',
+  });
+  await expect(spd01).toContainText(
+    '"Apply to each" took 80% of the run time (8.0 s) over 12 items',
+  );
+
+  await portal
+    .locator('#cfa-pane-host .runs .target', { hasText: 'Apply to each' })
+    .first()
+    .click();
+  expect(await settled(portal)).toBe('Showing "Apply to each".');
+  expect(await nodeCentre(portal, 'Apply_to_each-#scope')).toEqual(VISIBLE_CENTRE);
+});
+
 test('explains what to do when the flow page is not a flow', async ({ openPortal, analyse }) => {
   const portal = await openPortal(plainPage('Flows list', TOKEN), `/environments/${ENV}/flows`);
   await analyse(portal);

@@ -23,7 +23,9 @@ if (!window.cfaPane) {
       // The user closed the pane earlier: start a fresh one.
       pane = window.cfaPane = new Pane(send);
     }
-    if (message.type === 'cfa:loading') pane.showLoading();
+    if (message.type === 'cfa:loading') pane.showLoading(message.runs);
+    else if (message.type === 'cfa:runs-progress')
+      pane.showRunsProgress(message.done, message.total);
     else if (message.type === 'cfa:result') void pane.showResult(message.result);
     else if (message.type === 'cfa:error') pane.showError(message.message);
   });

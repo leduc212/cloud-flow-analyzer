@@ -178,13 +178,16 @@ export function createApiClient(options: ApiClientOptions) {
     });
   }
 
-  /** Follows `nextLink` pages until `maxItems` items or `maxPages` pages. */
-  async function getAll<T>(
+  /**
+   * Follows `nextLink` pages until `maxItems` items or `maxPages` pages. `more` is true when
+   * the list went on beyond what was read.
+   */
+  async function getList<T>(
     url: string,
     label: string,
     maxItems = 1000,
     maxPages = 20,
-  ): Promise<T[]> {
+  ): Promise<{ items: T[]; more: boolean }> {
     const items: T[] = [];
     let next: string | undefined = url;
     for (let page = 1; next && page <= maxPages && items.length < maxItems; page++) {
@@ -195,10 +198,20 @@ export function createApiClient(options: ApiClientOptions) {
       items.push(...(body.value ?? []));
       next = body.nextLink;
     }
-    return items.slice(0, maxItems);
+    return { items: items.slice(0, maxItems), more: Boolean(next) || items.length > maxItems };
   }
 
-  return { get, getAll };
+  /** Follows `nextLink` pages until `maxItems` items or `maxPages` pages. */
+  async function getAll<T>(
+    url: string,
+    label: string,
+    maxItems = 1000,
+    maxPages = 20,
+  ): Promise<T[]> {
+    return (await getList<T>(url, label, maxItems, maxPages)).items;
+  }
+
+  return { get, getAll, getList };
 }
 
 export type ApiClient = ReturnType<typeof createApiClient>;

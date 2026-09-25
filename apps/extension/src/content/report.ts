@@ -15,6 +15,13 @@ export function scoreWithout(result: PaneResult, dismissed: ReadonlySet<string>)
   );
 }
 
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)} min`;
+  return `${(ms / 3_600_000).toFixed(1)} h`;
+}
+
 const SEVERITY = { high: 'High', medium: 'Medium', low: 'Low' } as const;
 
 export const CAPPED_NOTE = 'capped at C while a high security finding is open';
@@ -37,9 +44,32 @@ export function markdownReport(result: PaneResult, dismissed: ReadonlySet<string
       `**Grade ${score.grade}** (${score.overall}/100${score.capped ? `, ${CAPPED_NOTE}` : ''})`,
       ...CATEGORY_LABELS.map(([category, name]) => `${name} ${score.categories[category].score}`),
     ].join(' · '),
-    `${result.actionCount} actions · about ${result.estimate.total.toLocaleString('en-US')} actions per run${result.estimate.assumed ? ' (estimated)' : ''} · analysed ${result.analysedAt.slice(0, 10)}`,
+    `${result.actionCount} actions · about ${result.estimate.total.toLocaleString('en-US')} actions per run${result.estimate.assumed ? ' (estimated)' : result.runs ? ' (from runs)' : ''} · analysed ${result.analysedAt.slice(0, 10)}`,
     '',
   ];
+  const runs = result.runs;
+  if (runs && runs.sampled > 0) {
+    const statuses = Object.entries(runs.statuses)
+      .map(([status, count]) => `${count} ${status.toLowerCase()}`)
+      .join(', ');
+    lines.push(
+      `**Recent runs:** ${runs.sampled} (${statuses}) · median ${formatDuration(runs.durationP50Ms)} · slowest 5% ${formatDuration(runs.durationP95Ms)}`,
+      '',
+    );
+    for (const item of runs.slowest) {
+      const time =
+        item.timeSharePct !== undefined
+          ? `${item.timeSharePct}% of the run, ${formatDuration(item.busyP50Ms)}`
+          : `${formatDuration(item.busyP50Ms)} over ${item.executionsPerRun ?? 1} executions`;
+      lines.push(`- ${item.targetLabel}: ${time}`);
+    }
+    for (const loop of runs.loops) {
+      lines.push(
+        `- ${loop.targetLabel}: ${loop.iterationsP50}${loop.truncated ? '+' : ''} items${loop.nested ? ' per outer item' : ''} (max ${loop.iterationsMax})`,
+      );
+    }
+    lines.push('');
+  }
   if (open.length === 0) lines.push('No open findings.');
   for (const f of open) {
     lines.push(

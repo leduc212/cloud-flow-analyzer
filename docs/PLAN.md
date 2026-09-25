@@ -144,7 +144,7 @@ Each rule has: `id`, `category` (speed / resources / reliability / security / ma
 ### Resources (every action counts toward Power Platform request limits)
 | ID | In | Detects | Recommendation |
 |---|---|---|---|
-| RES01 📊 | v0.2 | Trigger has no `conditions`, and many sampled runs did no real work (every action after the first condition was Skipped) | Add a trigger condition. Runs that are filtered out don't count |
+| RES01 📊 | v0.2 ✅ | Event trigger (Dataverse or connector) with no `conditions`; the first top-level Condition only reads trigger data; in at least half of 5+ sampled succeeded runs, no connector / HTTP / child-flow call in or after it ran | Add a trigger condition. Runs that are filtered out never start |
 | RES02 | v0.1 | Dataverse trigger (`SubscribeWebhookTrigger`) whose `subscriptionRequest/message` includes Update (3 = Modified, 4 = Added or Modified, 6 = Modified or Deleted, 7 = all; verify codes in S1) without `subscriptionRequest/filteringattributes` | Set "Select columns" (and "Filter rows" if only some rows matter) |
 | RES03 | v0.1 | `Recurrence` trigger every second, or every 1–5 minutes | Use an event trigger or a longer interval |
 | RES04 | v0.1 | List queries without a column limit (Dataverse `$select` / FetchXML, SQL and Excel `$select`), or without any of `$filter` / `$top` / FetchXML | Add select / filter / top |
@@ -323,6 +323,17 @@ Confirmed against a real tenant (commercial cloud, 6 environments, 61 flows):
 ---
 
 ## 7. Run analysis design
+**Built (v0.2, 2026-09-25).** What the capture showed, and how the build follows it:
+- A loop's own entry in the run's action list has its real start and end (its wall-clock time). An action *inside* a loop has one entry with misleading times (start of the last iteration, end near the loop's end), so inner actions are measured only from their repetitions.
+- Repetitions carry `repetitionIndexes` (outermost loop first), so one inner action's repetitions give the item count of every loop around it. Nested items are counted per outer item.
+- Neither list has retry history, and the capture has no 429s. Throttling is counted from `code` `429` / `TooManyRequests` when it appears; REL03 📊 waits for real data.
+- What is fetched per run: its action list (paged at 100), then repetitions for the first action of each loop (item counts) and for connector / HTTP / child-flow calls inside loops (time), at most 15 actions × 3 pages, and only for loops that ran in that run. Defaults: the last 20 runs; unfinished runs are skipped.
+- Numbers are medians over runs (nearest rank). Time share = the action's (or its outermost loop's) time ÷ the run's duration.
+- Findings of 📊 rules (SPD01, SPD03, SPD07, RES08, RES01) get the measured time share and item count in their message and evidence, so the score weighs them by measured impact. If the loop never had more than one item, a per-item finding drops to low severity.
+- Finished runs are cached in IndexedDB (key: environment/flow/run, plus the list of loop actions read, so a changed flow reads its runs again), dropped after 30 days; the pane has **Clear cached runs**.
+- Not built yet: a "slowest runs" mode, a cancel button, RES06, REL03 📊.
+
+Original design:
 - **Sampling:** default the last 20 runs (configurable 5–100), plus a "slowest runs" mode (the runs list has start and end times, so the slowest can be picked without extra calls).
 - **Per run:** fetch actions; fetch repetitions for each action inside a loop, capped at **500 repetitions per inner action per run**. Request budget per run ≈ 1 + Σ(inner actions × pages).
 - **Rate limiting:** a queue with at most 4 requests at once, backing off on 429 (respect `Retry-After`); progress bar and cancel button.
@@ -339,7 +350,7 @@ Confirmed against a real tenant (commercial cloud, 6 environments, 61 flows):
 - **Token:** kept in `chrome.storage.session` only (memory, never on disk, not IndexedDB, not `chrome.storage.local`). Never logged, never included in a capture file, never sent to a host of the other kind.
 - **No outside calls:** no analytics, telemetry or remote code. The default MV3 Content Security Policy blocks remote scripts.
 - **Minimal permissions:** `webRequest` (read headers only, no blocking), `storage`, and `scripting` (to add the analysis pane to a portal tab when the user asks; no warning). Host permissions: `*.api.flow.microsoft.com`, `*.api.powerplatform.com`, and the maker portals (MV3 needs host access to a request's initiator as well as its URL). No `tabs` permission, which would add a "Read your browsing history" warning.
-- **Cache data:** flow definitions can contain sensitive values, so offer a "Clear cache" button and state in the README what's stored locally.
+- **Cache data:** flow definitions can contain sensitive values, so offer a "Clear cache" button and state in the README what's stored locally. Built: definitions aren't cached. The run cache (IndexedDB) keeps only run and action names, statuses, error codes and times, never inputs or outputs; **Clear cached runs** in the pane empties it, and entries expire after 30 days.
 - **Fixtures and capture files:** the capture tool anonymises by default: IDs, emails, URLs, names and literal input values are replaced; `inputsLink`/`outputsLink` (signed URLs) are removed; expressions are kept. Files must be reviewed before they're committed.
 
 ---
@@ -383,9 +394,11 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 - *Done when:* analysing real flows shows correct findings, pinned to the right actions, with few false alarms.
 
 ### v0.2: Run analysis in the pane
-- "Analyse recent runs" in the pane: sampling, rate-limited queue, cache; slowest actions, loop iterations, throttling per action.
+- ✅ "Analyse recent runs" in the pane: last 20 runs, rate-limited queue, IndexedDB cache, progress; where the time goes, loop sizes, failures and throttling per action; findings and score use the measured numbers (see §7).
 - ✅ Definition rules from the 2026-09-25 research: SEC01–SEC03, RES08, SPD05, REL03 (retry none), REL07–REL10, and the Security score category (see §4, §5).
-- 📊 versions of SPD01, SPD03, SPD07 (rank by measured time share); new rules RES01, RES06, REL03 (📊); estimated vs. measured actions per run.
+- ✅ 📊 versions of SPD01, SPD03, SPD07, RES08 (measured time share and items); new rule RES01; actions per run from measured loop sizes.
+- ⏳ RES06 (actions per day against a user-set limit), REL03 📊 (needs retry data), "slowest runs" mode, cancel button.
+- ⏳ Check against the portal: open a flow's run history and compare the slowest action and loop item counts with the pane.
 - *Done when:* the slowest action and loop iteration numbers match what the portal's run history shows.
 
 ### v0.3: Environment and remaining rules

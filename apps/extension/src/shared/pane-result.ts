@@ -1,4 +1,13 @@
-import { getRule, label, type FindingTarget, type FlowAnalysis } from '@cfa/core';
+import {
+  ancestors,
+  getRule,
+  label,
+  type ActionNode,
+  type FindingEvidence,
+  type FindingTarget,
+  type FlowAnalysis,
+  type FlowTree,
+} from '@cfa/core';
 import type { FlowRef } from './flow-url.ts';
 
 /** One step on the way to a finding's target: its kind and which branch of its parent holds it. */
@@ -28,6 +37,41 @@ export interface PaneFinding {
   example?: { before: string; after: string };
   docs: string[];
   blockedBy?: string[];
+  /** What recent runs measured (time share, loop items), when runs were analysed. */
+  evidence?: FindingEvidence;
+}
+
+/** An action shown in the runs summary, with what the pane needs to reveal it. */
+export interface PaneRunTarget {
+  target: FindingTarget;
+  targetLabel: string;
+  steps: PathStep[];
+}
+
+export interface PaneRuns {
+  /** Finished runs analysed. */
+  sampled: number;
+  /** Runs listed (finished or not). */
+  listed: number;
+  fromCache: number;
+  statuses: Record<string, number>;
+  durationP50Ms: number;
+  durationP95Ms: number;
+  /** Where the time goes: the busiest actions and loops. */
+  slowest: (PaneRunTarget & {
+    /** Share of the run time; only for actions outside loops (and loops themselves). */
+    timeSharePct?: number;
+    busyP50Ms: number;
+    /** Executions per run for actions inside loops. */
+    executionsPerRun?: number;
+  })[];
+  loops: (PaneRunTarget & {
+    iterationsP50: number;
+    iterationsMax: number;
+    truncated: boolean;
+    nested: boolean;
+  })[];
+  failures: (PaneRunTarget & { failed: number; throttled: number })[];
 }
 
 export interface PaneResult {
@@ -43,13 +87,98 @@ export interface PaneResult {
   order: string[];
   warnings: string[];
   analysedAt: string;
+  runs?: PaneRuns;
+  /** Why the runs couldn't be read, when the user asked for them. */
+  runsError?: string;
+}
+
+function steps(tree: FlowTree, path: string[]): PathStep[] {
+  return path.map((name): PathStep => {
+    const node = tree.byName.get(name);
+    if (!node) return { name, kind: 'trigger' };
+    return { name, kind: node.kind, ...(node.branch ? { branch: node.branch } : {}) };
+  });
+}
+
+function runTarget(tree: FlowTree, node: ActionNode): PaneRunTarget {
+  return {
+    target: { kind: 'action', name: node.name, path: node.path },
+    targetLabel: label(node.name),
+    steps: steps(tree, node.path),
+  };
+}
+
+const CONTAINERS = new Set(['scope', 'condition', 'switch']);
+const isLoop = (node: ActionNode) => node.kind === 'foreach' || node.kind === 'until';
+
+/** The runs summary shown in the pane: time, loop sizes, failures. */
+export function buildPaneRuns(
+  analysis: FlowAnalysis,
+  fetched: { listed: number; fromCache: number },
+): PaneRuns | undefined {
+  const { tree, runStats } = analysis;
+  if (!runStats) return undefined;
+  const nodes = tree.all;
+  const slowest = nodes
+    .filter((n) => !CONTAINERS.has(n.kind))
+    .flatMap((node) => {
+      const stats = runStats.actions.get(node.name);
+      if (!stats || stats.runs === 0 || stats.busyP50Ms === 0) return [];
+      const inLoop = ancestors(tree, node).some(isLoop);
+      return [
+        {
+          ...runTarget(tree, node),
+          ...(stats.timeSharePct !== undefined ? { timeSharePct: stats.timeSharePct } : {}),
+          busyP50Ms: stats.busyP50Ms,
+          ...(inLoop ? { executionsPerRun: Math.round(stats.executions / stats.runs) } : {}),
+        },
+      ];
+    })
+    .sort((a, b) => b.busyP50Ms - a.busyP50Ms)
+    .slice(0, 6);
+  const loops = nodes.filter(isLoop).flatMap((node) => {
+    const stats = runStats.loops.get(node.name);
+    if (!stats) return [];
+    return [
+      {
+        ...runTarget(tree, node),
+        iterationsP50: stats.iterationsP50,
+        iterationsMax: stats.iterationsMax,
+        truncated: stats.truncated,
+        nested: ancestors(tree, node).some(isLoop),
+      },
+    ];
+  });
+  const failures = nodes
+    .flatMap((node) => {
+      const stats = runStats.actions.get(node.name);
+      if (!stats || (stats.failed === 0 && stats.throttled === 0)) return [];
+      return [{ ...runTarget(tree, node), failed: stats.failed, throttled: stats.throttled }];
+    })
+    // Scopes fail when something inside them fails: show the action that failed.
+    .filter((f) => !CONTAINERS.has(tree.byName.get(f.target.name ?? '')?.kind ?? ''))
+    .sort((a, b) => b.failed + b.throttled - (a.failed + a.throttled))
+    .slice(0, 5);
+  return {
+    sampled: runStats.sampled,
+    listed: fetched.listed,
+    fromCache: fetched.fromCache,
+    statuses: runStats.statuses,
+    durationP50Ms: runStats.durationP50Ms,
+    durationP95Ms: runStats.durationP95Ms,
+    slowest,
+    loops,
+    failures,
+  };
 }
 
 export function buildPaneResult(
   ref: FlowRef,
   analysis: FlowAnalysis,
   now = new Date(),
+  runs?: { listed: number; fromCache: number } | { error: string },
 ): PaneResult {
+  const paneRuns = runs && 'listed' in runs ? buildPaneRuns(analysis, runs) : undefined;
   const { tree, score, estimate, findings, warnings } = analysis;
   return {
     ref,
@@ -74,21 +203,20 @@ export function buildPaneResult(
         confidence: finding.confidence,
         target: finding.target,
         targetLabel: finding.target.name ? label(finding.target.name) : 'Whole flow',
-        steps: finding.target.path.map((name): PathStep => {
-          const node = tree.byName.get(name);
-          if (!node) return { name, kind: 'trigger' };
-          return { name, kind: node.kind, ...(node.branch ? { branch: node.branch } : {}) };
-        }),
+        steps: steps(tree, finding.target.path),
         message: finding.message,
         why: rule?.why ?? '',
         fix: finding.fix ?? rule?.fix ?? '',
         ...(rule?.example ? { example: rule.example } : {}),
         docs: rule?.docs ?? [],
         ...(finding.blockedBy ? { blockedBy: finding.blockedBy } : {}),
+        ...(finding.evidence ? { evidence: finding.evidence } : {}),
       };
     }),
     order: [...tree.triggers.map((t) => t.name), ...tree.all.map((n) => n.name)],
     warnings,
     analysedAt: now.toISOString(),
+    ...(paneRuns ? { runs: paneRuns } : {}),
+    ...(runs && 'error' in runs ? { runsError: runs.error } : {}),
   };
 }

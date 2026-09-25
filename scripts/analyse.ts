@@ -3,13 +3,22 @@
 //   pnpm analyse <file.json> [more files…]
 //
 // Accepts a flow from the Power Automate API or an export package, Dataverse clientdata, a bare
-// definition, or a capture file from the extension's capture tool (every flow in it is analysed).
+// definition, or a capture file from the extension's capture tool (every flow in it is analysed,
+// with the runs recorded for it).
 import { readFileSync } from 'node:fs';
-import { analyseFlow, getRule, label, type Finding } from '@cfa/core';
+import {
+  analyseFlow,
+  getRule,
+  label,
+  runSamplesFromResponses,
+  type Finding,
+  type RunSample,
+} from '@cfa/core';
 
 interface Candidate {
   source: string;
   input: unknown;
+  runs?: RunSample[];
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -18,12 +27,22 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 /** Flows inside a capture file: every recorded response that carries a definition. */
 function fromCapture(file: string, capture: Record<string, unknown>): Candidate[] {
-  const requests = Array.isArray(capture.requests) ? capture.requests : [];
+  const requests = (Array.isArray(capture.requests) ? capture.requests : []).filter(isObject);
+  const runs = runSamplesFromResponses(
+    requests.map((r) => ({ url: String(r.url ?? ''), body: r.body })),
+  );
   return requests.flatMap((request): Candidate[] => {
-    if (!isObject(request) || !isObject(request.body)) return [];
+    if (!isObject(request.body)) return [];
     const properties = request.body.properties;
     if (!isObject(properties) || !isObject(properties.definition)) return [];
-    return [{ source: `${file} → ${String(request.label ?? request.url)}`, input: request.body }];
+    const flowRuns = runs.get(String(request.body.name));
+    return [
+      {
+        source: `${file} → ${String(request.label ?? request.url)}`,
+        input: request.body,
+        ...(flowRuns?.length ? { runs: flowRuns } : {}),
+      },
+    ];
   });
 }
 
@@ -46,15 +65,26 @@ if (files.length === 0) {
 
 let failed = false;
 for (const file of files) {
-  for (const { source, input } of candidates(file)) {
+  for (const { source, input, runs } of candidates(file)) {
     try {
-      const { tree, findings, score, estimate, warnings } = analyseFlow(input);
+      const { tree, findings, score, estimate, warnings, runStats } = analyseFlow(
+        input,
+        runs ? { runs } : {},
+      );
       const c = score.categories;
       console.log(`\n${tree.displayName ?? source}`);
       console.log(
         `  ${score.grade} (${score.overall}) · speed ${c.speed.score} · resources ${c.resources.score} · reliability ${c.reliability.score} · security ${c.security.score}${score.capped ? ' (capped at C)' : ''}` +
           ` · ${tree.actionCount} actions · ~${estimate.total.toLocaleString('en-US')} per run${estimate.assumed ? ' (assumed loop sizes)' : ''}`,
       );
+      if (runStats) {
+        const statuses = Object.entries(runStats.statuses)
+          .map(([status, count]) => `${count} ${status.toLowerCase()}`)
+          .join(', ');
+        console.log(
+          `  runs: ${runStats.sampled} (${statuses}) · median ${(runStats.durationP50Ms / 1000).toFixed(1)} s`,
+        );
+      }
       for (const finding of findings) {
         const rule = getRule(finding.ruleId);
         console.log(

@@ -8,9 +8,62 @@ import {
   writeOperation,
 } from '../connectors.ts';
 import { asNumber, asString, hasValue } from '../definition.ts';
-import { enclosingLoops, isConcurrentLoop, singleRowSource } from '../parser.ts';
+import { collectStrings } from '../expressions.ts';
+import { descendants, enclosingLoops, isConcurrentLoop, singleRowSource } from '../parser.ts';
 import type { ActionNode } from '../types.ts';
 import { DOCS, actionTarget, plural, q, triggerTarget, type Rule, type RuleMatch } from './rule.ts';
+
+const TRIGGER_DATA = /\btrigger(?:Outputs|Body)\(\)/;
+
+export const RES01: Rule = {
+  id: 'RES01',
+  category: 'resources',
+  severity: 'medium',
+  confidence: 0.8,
+  usesRunData: true,
+  title: 'Most runs stop at the first check',
+  why: 'Every run counts its actions toward your request limits, even when a Condition early in the flow finds there is nothing to do. A trigger condition makes the same check before the run starts, so those runs never happen.',
+  fix: "Move the check into a trigger condition (trigger Settings → Trigger conditions), for example @equals(triggerOutputs()?['body/statuscode'], 1), then remove the Condition from the flow.",
+  example: {
+    before:
+      "When a row is modified\nCondition  triggerOutputs()?['body/statuscode'] = 1\n  └ Yes: …   (most runs take No and end)",
+    after:
+      "When a row is modified\n  Trigger condition: @equals(triggerOutputs()?['body/statuscode'], 1)\n…   (runs start only when there is work)",
+  },
+  docs: [DOCS.triggers, DOCS.understandLimits],
+  check({ tree, runs }) {
+    if (!runs) return [];
+    const trigger = tree.triggers[0];
+    // Only event triggers take conditions on their data.
+    if (!trigger || trigger.conditions.length > 0) return [];
+    if (trigger.kind !== 'dataverse' && trigger.kind !== 'connector') return [];
+    const check = tree.actions.find((n) => n.kind === 'condition');
+    if (!check || check.references.length > 0 || check.variableRefs.length > 0) return [];
+    if (!collectStrings(check.raw.expression).some((t) => TRIGGER_DATA.test(t))) return [];
+    // The work: calls inside the Condition or after it.
+    const after = tree.actions.slice(tree.actions.indexOf(check));
+    const work = new Set(
+      after
+        .flatMap((n) => [n, ...descendants(n)])
+        .filter((n) => n.kind === 'connector' || n.kind === 'http' || n.kind === 'child-flow')
+        .map((n) => n.name),
+    );
+    if (work.size === 0) return [];
+    const succeeded = runs.samples.filter((r) => r.status.toLowerCase() === 'succeeded');
+    if (succeeded.length < 5) return [];
+    const empty = succeeded.filter(
+      (run) => !run.actions.some((a) => work.has(a.name) && a.status.toLowerCase() !== 'skipped'),
+    ).length;
+    if (empty / succeeded.length < 0.5) return [];
+    return [
+      {
+        target: actionTarget(check),
+        message: `${empty} of ${succeeded.length} recent runs stopped at ${q(check.name)} without making any call. It only checks trigger data, so a trigger condition could stop those runs from starting.`,
+        confidence: empty / succeeded.length >= 0.8 ? 0.9 : 0.7,
+      },
+    ];
+  },
+};
 
 export const RES02: Rule = {
   id: 'RES02',
@@ -137,6 +190,7 @@ export const RES08: Rule = {
   category: 'resources',
   severity: 'medium',
   confidence: 0.6,
+  usesRunData: true,
   title: 'One write per loop item',
   why: 'Creating, updating or deleting records one at a time in a loop makes one request per record. With hundreds or thousands of items this is slow, counts heavily toward request limits, and invites throttling. Microsoft lists it as an anti-pattern.',
   fix: 'Prepare all the records with Select before the loop and write them in bulk or in batches. For services with no batch API, at least turn on concurrency for the loop.',
@@ -173,4 +227,4 @@ export const RES08: Rule = {
   },
 };
 
-export const RESOURCE_RULES: Rule[] = [RES02, RES03, RES04, RES08];
+export const RESOURCE_RULES: Rule[] = [RES01, RES02, RES03, RES04, RES08];

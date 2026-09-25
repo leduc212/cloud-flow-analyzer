@@ -1,4 +1,5 @@
 import { label } from '../parser.ts';
+import type { RunSample, RunStats } from '../runs.ts';
 import type {
   ActionNode,
   Category,
@@ -11,6 +12,8 @@ import type {
 
 export interface RuleContext {
   tree: FlowTree;
+  /** Recent runs, when the user asked for run analysis. */
+  runs?: { samples: RunSample[]; stats: RunStats };
 }
 
 /** What a rule reports; the engine adds the rule's id, category and defaults. */

@@ -1,15 +1,18 @@
 import { estimateActionsPerRun, type ActionEstimate, type EstimateOptions } from './estimate.ts';
-import { parseFlow } from './parser.ts';
+import { enclosingLoops, parseFlow } from './parser.ts';
 import { RULES } from './rules/index.ts';
-import type { Rule } from './rules/rule.ts';
+import { plural, q, type Rule, type RuleContext } from './rules/rule.ts';
+import { summariseRuns, type RunSample, type RunStats } from './runs.ts';
 import { scoreFindings, type Score } from './scoring.ts';
-import type { Finding, FlowTree, Severity } from './types.ts';
+import type { Finding, FindingEvidence, FlowTree, Severity } from './types.ts';
 
 export interface AnalyseOptions {
   /** Rules to run. Defaults to every rule that isn't off by default. */
   rules?: Rule[];
   estimate?: EstimateOptions;
   isAccepted?: (finding: Finding) => boolean;
+  /** Recent runs of the flow. Rules marked 📊 then measure instead of assuming. */
+  runs?: RunSample[];
 }
 
 export interface FlowAnalysis {
@@ -17,25 +20,107 @@ export interface FlowAnalysis {
   findings: Finding[];
   score: Score;
   estimate: ActionEstimate;
+  /** Statistics over the runs passed in `options.runs`. */
+  runStats?: RunStats;
   /** Parser warnings plus rules that failed on this flow. Never fatal. */
   warnings: string[];
 }
 
 const SEVERITY_ORDER: Record<Severity, number> = { high: 0, medium: 1, low: 2 };
 
-export function runRules(tree: FlowTree, rules: Rule[], warnings: string[] = []): Finding[] {
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${(ms / 60_000).toFixed(1)} min`;
+}
+
+/**
+ * What the runs measured about a finding's target: the time share of the loop it is in (or of
+ * the action itself outside loops), iterations, and throttled calls.
+ */
+export interface Measurement {
+  evidence: FindingEvidence;
+  /** One sentence for the finding's message. */
+  note: string;
+  /** The loop never had more than one item in the sampled runs. */
+  singleItem: boolean;
+}
+
+/**
+ * What the runs measured about a finding's target: the time share of the outermost loop it is
+ * in (or of the action itself outside loops), the loop's items, and throttled calls.
+ */
+export function measure(
+  tree: FlowTree,
+  stats: RunStats,
+  finding: Pick<Finding, 'target'>,
+): Measurement | undefined {
+  const node =
+    finding.target.kind === 'action' ? tree.byName.get(finding.target.name ?? '') : undefined;
+  if (!node) return undefined;
+  const loops = enclosingLoops(tree, node);
+  const isLoop = node.kind === 'foreach' || node.kind === 'until';
+  const outer = loops[loops.length - 1] ?? node;
+  const loop = isLoop ? node : loops[0];
+  const time = stats.actions.get(outer.name);
+  const share = time?.timeSharePct;
+  const iterations = loop ? stats.loops.get(loop.name) : undefined;
+  const throttled = stats.actions.get(node.name)?.throttled ?? 0;
+  const evidence: FindingEvidence = {
+    ...(share !== undefined ? { timeSharePct: share } : {}),
+    ...(iterations ? { iterationsP50: iterations.iterationsP50 } : {}),
+    ...(throttled > 0 ? { retries429: throttled } : {}),
+  };
+  const items = iterations
+    ? `${iterations.iterationsP50}${iterations.truncated ? '+' : ''} ${iterations.iterationsP50 === 1 && !iterations.truncated ? 'item' : 'items'}`
+    : '';
+  const parts: string[] = [];
+  if (share !== undefined && time) {
+    const over = iterations && loop === outer ? ` over ${items}` : '';
+    parts.push(
+      `${q(outer.name)} took ${share}% of the run time (${formatMs(time.busyP50Ms)})${over}`,
+    );
+  }
+  if (iterations && loop && (share === undefined || loop !== outer)) {
+    const per = enclosingLoops(tree, loop).length > 0 ? ' per outer item' : '';
+    parts.push(`${q(loop.name)} ran ${items}${per}`);
+  }
+  if (throttled > 0) parts.push(`${plural(throttled, 'call')} to it were throttled (429)`);
+  if (parts.length === 0) return undefined;
+  const runs = plural(stats.sampled, 'recent run');
+  return {
+    evidence,
+    note: `In ${runs} (medians): ${parts.join('; ')}.`,
+    singleItem: Boolean(iterations && !iterations.truncated && iterations.iterationsP95 <= 1),
+  };
+}
+
+export function runRules(
+  tree: FlowTree,
+  rules: Rule[],
+  warnings: string[] = [],
+  runs?: RuleContext['runs'],
+): Finding[] {
   const order = new Map(tree.all.map((node, index) => [node.name, index]));
   const findings: Finding[] = [];
   for (const rule of rules) {
     try {
-      for (const match of rule.check({ tree })) {
-        findings.push({
+      for (const match of rule.check({ tree, ...(runs ? { runs } : {}) })) {
+        const finding: Finding = {
           ...match,
           ruleId: rule.id,
           category: rule.category,
           severity: match.severity ?? rule.severity,
           confidence: match.confidence ?? rule.confidence,
-        });
+        };
+        const measured = rule.usesRunData && runs ? measure(tree, runs.stats, finding) : undefined;
+        if (measured) {
+          finding.evidence = { ...measured.evidence, ...finding.evidence };
+          finding.message = `${finding.message} ${measured.note}`;
+          // Per-item costs hardly matter while the loop only ever gets one item.
+          if (measured.singleItem) finding.severity = 'low';
+        }
+        findings.push(finding);
       }
     } catch (error) {
       warnings.push(
@@ -58,12 +143,23 @@ export function analyseFlow(input: unknown, options: AnalyseOptions = {}): FlowA
   const tree = parseFlow(input);
   const warnings = [...tree.warnings];
   const rules = options.rules ?? RULES.filter((rule) => !rule.offByDefault);
-  const findings = runRules(tree, rules, warnings);
+  const samples = options.runs;
+  const runStats = samples ? summariseRuns(tree, samples) : undefined;
+  const runs =
+    samples && runStats && runStats.sampled > 0 ? { samples, stats: runStats } : undefined;
+  const findings = runRules(tree, rules, warnings, runs);
+  const measured = runStats
+    ? Object.fromEntries([...runStats.loops.values()].map((l) => [l.name, l.iterationsP50]))
+    : {};
   return {
     tree,
     findings,
     score: scoreFindings(findings, options.isAccepted),
-    estimate: estimateActionsPerRun(tree, options.estimate),
+    estimate: estimateActionsPerRun(tree, {
+      ...options.estimate,
+      iterations: { ...measured, ...options.estimate?.iterations },
+    }),
+    ...(runStats ? { runStats } : {}),
     warnings,
   };
 }

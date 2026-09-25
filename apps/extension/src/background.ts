@@ -7,15 +7,19 @@
 //
 // It also runs the analysis for the in-page pane: the popup (or the pane's Re-analyse button)
 // asks for a tab to be analysed; the worker injects the pane, fetches the flow with the captured
-// token, analyses it and sends the result to the pane. The page never sees the token.
-import { analyseFlow } from '@cfa/core';
-import { createApiClient } from './api/client.ts';
+// token, analyses it and sends the result to the pane. The page never sees the token. When the
+// pane asks for it, the worker also reads the flow's recent runs (cached in IndexedDB).
+import { analyseFlow, parseFlow, type RunSample } from '@cfa/core';
+import { NoTokenError, createApiClient } from './api/client.ts';
 import { fetchFlow } from './api/flow-lookup.ts';
+import { flowApi } from './api/flows.ts';
+import { DEFAULT_RUN_SAMPLE, fetchRunSamples } from './api/runs.ts';
 import { friendlyError } from './shared/errors.ts';
 import { parseFlowUrl } from './shared/flow-url.ts';
 import type { BackgroundMessage, ContentMessage } from './shared/messages.ts';
 import { openExtensionPage } from './shared/open-page.ts';
 import { buildPaneResult } from './shared/pane-result.ts';
+import { indexedDbRunCache } from './shared/run-cache.ts';
 import { ENDPOINTS_KEY, addEndpoint, type EndpointRecord } from './shared/endpoints.ts';
 import { API_URL_PATTERNS, hostKind, isPortalOrigin, type HostKind } from './shared/hosts.ts';
 import { TOKEN_KEYS, loadTokens, makeTokenRecord, type TokenRecord } from './shared/token.ts';
@@ -77,7 +81,14 @@ async function send(tabId: number, message: ContentMessage): Promise<void> {
   await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
 }
 
-async function analyseTab(tabId: number): Promise<void> {
+const runCache = indexedDbRunCache();
+
+function flowName(flow: unknown, fallback: string): string {
+  const name = (flow as { name?: unknown } | null)?.name;
+  return typeof name === 'string' && name ? name : fallback;
+}
+
+async function analyseTab(tabId: number, withRuns = false): Promise<void> {
   const tab = await chrome.tabs.get(tabId);
   const ref = parseFlowUrl(tab.url);
   await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content.js'] });
@@ -88,12 +99,45 @@ async function analyseTab(tabId: number): Promise<void> {
     });
     return;
   }
-  await send(tabId, { type: 'cfa:loading', flowId: ref.flowId });
+  await send(tabId, { type: 'cfa:loading', flowId: ref.flowId, runs: withRuns });
   try {
     const tokens = await loadTokens();
     const client = createApiClient({ getToken: (kind) => tokens[kind] });
     const flow = await fetchFlow(client, tokens, ref);
-    await send(tabId, { type: 'cfa:result', result: buildPaneResult(ref, analyseFlow(flow)) });
+    if (!withRuns) {
+      await send(tabId, { type: 'cfa:result', result: buildPaneResult(ref, analyseFlow(flow)) });
+      return;
+    }
+    let samples: RunSample[] | undefined;
+    let fetched: { listed: number; fromCache: number } | { error: string };
+    try {
+      const origin = tokens.flow?.origins[0];
+      if (!origin) throw new NoTokenError('flow');
+      const runs = await fetchRunSamples(
+        client,
+        flowApi(origin),
+        ref.environment,
+        flowName(flow, ref.flowId),
+        parseFlow(flow),
+        {
+          ...DEFAULT_RUN_SAMPLE,
+          cache: runCache,
+          onProgress: (done, total) =>
+            void send(tabId, { type: 'cfa:runs-progress', flowId: ref.flowId, done, total }).catch(
+              () => undefined,
+            ),
+        },
+      );
+      samples = runs.samples;
+      fetched = { listed: runs.listed, fromCache: runs.fromCache };
+    } catch (error) {
+      fetched = { error: friendlyError(error) };
+    }
+    const analysis = analyseFlow(flow, samples ? { runs: samples } : {});
+    await send(tabId, {
+      type: 'cfa:result',
+      result: buildPaneResult(ref, analysis, new Date(), fetched),
+    });
   } catch (error) {
     await send(tabId, { type: 'cfa:error', message: friendlyError(error) });
   }
@@ -101,9 +145,10 @@ async function analyseTab(tabId: number): Promise<void> {
 
 chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender) => {
   const fail = (error: unknown) => console.error('Cloud Flow Analyzer:', error);
-  if (message.type === 'cfa:analyse-tab') analyseTab(message.tabId).catch(fail);
+  if (message.type === 'cfa:analyse-tab') analyseTab(message.tabId, message.runs).catch(fail);
   else if (message.type === 'cfa:analyse-sender' && sender.tab?.id !== undefined) {
-    analyseTab(sender.tab.id).catch(fail);
+    analyseTab(sender.tab.id, message.runs).catch(fail);
   } else if (message.type === 'cfa:open-capture') openExtensionPage(CAPTURE_PAGE).catch(fail);
+  else if (message.type === 'cfa:clear-run-cache') runCache.clear().catch(fail);
   return false;
 });

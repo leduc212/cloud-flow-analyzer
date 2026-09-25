@@ -4,12 +4,13 @@
 import { h } from '../shared/dom.ts';
 import { parseFlowUrl } from '../shared/flow-url.ts';
 import type { BackgroundMessage } from '../shared/messages.ts';
-import type { PaneFinding, PaneResult } from '../shared/pane-result.ts';
+import type { PaneFinding, PaneResult, PaneRunTarget } from '../shared/pane-result.ts';
 import styles from './pane.css?raw';
 import {
   CAPPED_NOTE,
   CATEGORY_LABELS,
   findingKey,
+  formatDuration,
   markdownReport,
   scoreWithout,
 } from './report.ts';
@@ -49,10 +50,14 @@ export class Pane {
   private readonly tab: HTMLButtonElement;
   private readonly header: HTMLElement;
   private readonly body: HTMLElement;
+  private readonly runsBox: HTMLElement;
+  private readonly list: HTMLElement;
   private readonly toast: HTMLElement;
   private readonly checkOutput: HTMLPreElement;
   private result: PaneResult | undefined;
   private filter: Filter = 'all';
+  /** Reading runs: how far it got. */
+  private runsProgress: { done: number; total: number } | undefined;
   private urlTimer: ReturnType<typeof setInterval> | undefined;
   private dismissed = new Set<string>();
   private readonly send: (message: BackgroundMessage) => void;
@@ -76,7 +81,9 @@ export class Pane {
       'Flow Analyzer',
     );
     this.header = h('header');
-    this.body = h('div', { class: 'body' });
+    this.runsBox = h('section', { class: 'runs', 'aria-label': 'Recent runs' });
+    this.list = h('div', { class: 'findings' });
+    this.body = h('div', { class: 'body' }, this.runsBox, this.list);
     this.toast = h('div', { class: 'toast', role: 'status' });
     this.checkOutput = h('pre');
     const footer = h(
@@ -112,26 +119,44 @@ export class Pane {
     this.renderHeader();
   }
 
-  showLoading(): void {
-    this.result = undefined;
+  /** `runs`: only the runs are being read, so the findings stay on screen. */
+  showLoading(runs = false): void {
     this.setMinimised(false);
+    if (runs && this.result) {
+      this.runsProgress = { done: 0, total: 0 };
+      this.renderRuns();
+      return;
+    }
+    this.result = undefined;
+    this.runsProgress = undefined;
     this.renderHeader();
-    this.body.replaceChildren(h('p', { class: 'state' }, 'Reading and analysing the flow…'));
+    this.renderRuns();
+    this.list.replaceChildren(h('p', { class: 'state' }, 'Reading and analysing the flow…'));
     this.setToast('');
+  }
+
+  showRunsProgress(done: number, total: number): void {
+    this.runsProgress = { done, total };
+    this.renderRuns();
   }
 
   showError(message: string): void {
     this.setMinimised(false);
+    this.result = undefined;
+    this.runsProgress = undefined;
     this.renderHeader();
-    this.body.replaceChildren(h('p', { class: 'state error' }, message));
+    this.renderRuns();
+    this.list.replaceChildren(h('p', { class: 'state error' }, message));
   }
 
   showResult(result: PaneResult): Promise<void> {
     this.result = result;
+    this.runsProgress = undefined;
     this.filter = 'all';
     this.dismissed = new Set();
     this.setMinimised(false);
     this.renderHeader();
+    this.renderRuns();
     this.renderFindings();
     this.watchUrl();
     return this.store
@@ -212,7 +237,11 @@ export class Pane {
           type: 'button',
           title: 'Analyse again',
           'aria-label': 'Analyse again',
-          onclick: () => this.send({ type: 'cfa:analyse-sender' }),
+          onclick: () =>
+            this.send({
+              type: 'cfa:analyse-sender',
+              ...(this.result?.runs ? { runs: true } : {}),
+            }),
         },
         '↻',
       ),
@@ -300,7 +329,7 @@ export class Pane {
               h('span', {}, `${name} `, h('b', {}, score.categories[category].score)),
             ),
           ),
-          `${result.actionCount} actions · ~${result.estimate.total.toLocaleString('en-US')} per run${result.estimate.assumed ? ' (estimated)' : ''}`,
+          `${result.actionCount} actions · ~${result.estimate.total.toLocaleString('en-US')} per run${result.estimate.assumed ? ' (estimated)' : result.runs ? ' (from runs)' : ''}`,
         ),
       ),
       h(
@@ -319,7 +348,7 @@ export class Pane {
     const result = this.result;
     if (!result) return;
     if (result.findings.length === 0) {
-      this.body.replaceChildren(
+      this.list.replaceChildren(
         h('p', { class: 'state ok' }, 'No problems found. This flow follows every rule we check.'),
       );
       return;
@@ -330,25 +359,164 @@ export class Pane {
       return this.filter === 'all' || showDismissed || f.severity === this.filter;
     });
     if (shown.length === 0 && this.filter === 'all') {
-      this.body.replaceChildren(h('p', { class: 'state ok' }, 'Every finding has been dismissed.'));
+      this.list.replaceChildren(h('p', { class: 'state ok' }, 'Every finding has been dismissed.'));
       return;
     }
-    this.body.replaceChildren(...shown.map((finding) => this.renderFinding(finding)));
+    this.list.replaceChildren(...shown.map((finding) => this.renderFinding(finding)));
+  }
+
+  private renderRuns(): void {
+    const result = this.result;
+    if (!result) {
+      this.runsBox.replaceChildren();
+      this.runsBox.hidden = true;
+      return;
+    }
+    this.runsBox.hidden = false;
+    const progress = this.runsProgress;
+    const reading = progress
+      ? h(
+          'p',
+          { class: 'runs-progress', role: 'status' },
+          progress.total > 0
+            ? `Reading runs… ${progress.done} of ${progress.total}`
+            : 'Reading runs…',
+        )
+      : null;
+    const analyse = (label: string) =>
+      h(
+        'button',
+        {
+          class: 'runs-button',
+          type: 'button',
+          disabled: progress !== undefined,
+          onclick: () => this.send({ type: 'cfa:analyse-sender', runs: true }),
+        },
+        label,
+      );
+    const runs = result.runs;
+    if (!runs) {
+      this.runsBox.replaceChildren(
+        h(
+          'div',
+          { class: 'runs-cta' },
+          analyse('Analyse recent runs'),
+          h(
+            'span',
+            { class: 'hint' },
+            'Reads the last 20 runs: timings, loop sizes and failures. No data from inside the runs.',
+          ),
+        ),
+        ...(reading ? [reading] : []),
+        ...(result.runsError ? [h('p', { class: 'runs-error' }, result.runsError)] : []),
+      );
+      return;
+    }
+    if (runs.sampled === 0) {
+      this.runsBox.replaceChildren(
+        h('p', { class: 'hint' }, 'No finished runs yet. Run the flow, then analyse again.'),
+        analyse('Read runs again'),
+        ...(reading ? [reading] : []),
+      );
+      return;
+    }
+    const statuses = Object.entries(runs.statuses)
+      .sort((a, b) => b[1] - a[1])
+      .map(([status, count]) => `${count} ${status.toLowerCase()}`)
+      .join(', ');
+    const row = (item: PaneRunTarget, value: string) =>
+      h('li', {}, this.targetButton(item), h('span', { class: 'value' }, value));
+    const list = (title: string, items: HTMLElement[]) =>
+      items.length > 0 ? [h('h4', {}, title), h('ul', {}, ...items)] : [];
+    this.runsBox.replaceChildren(
+      h(
+        'details',
+        { open: true },
+        h(
+          'summary',
+          {},
+          `Recent runs · ${runs.sampled} · median ${formatDuration(runs.durationP50Ms)}`,
+        ),
+        h(
+          'p',
+          { class: 'hint' },
+          `${statuses} · slowest 5%: ${formatDuration(runs.durationP95Ms)}${runs.fromCache ? ` · ${runs.fromCache} from cache` : ''}`,
+        ),
+        ...list(
+          'Where the time goes',
+          runs.slowest.map((item) =>
+            row(
+              item,
+              item.timeSharePct !== undefined
+                ? `${item.timeSharePct}% · ${formatDuration(item.busyP50Ms)}`
+                : `${formatDuration(item.busyP50Ms)} · ${item.executionsPerRun ?? 1}×`,
+            ),
+          ),
+        ),
+        ...list(
+          'Loop sizes',
+          runs.loops.map((loop) =>
+            row(
+              loop,
+              `${loop.iterationsP50}${loop.truncated ? '+' : ''} ${loop.iterationsP50 === 1 && !loop.truncated ? 'item' : 'items'}${loop.nested ? ' per outer item' : ''} (max ${loop.iterationsMax}${loop.truncated ? '+' : ''})`,
+            ),
+          ),
+        ),
+        ...list(
+          'Failures',
+          runs.failures.map((item) =>
+            row(
+              item,
+              [
+                item.failed ? `failed ${item.failed}×` : '',
+                item.throttled ? `throttled ${item.throttled}×` : '',
+              ]
+                .filter(Boolean)
+                .join(' · '),
+            ),
+          ),
+        ),
+        h('p', { class: 'hint' }, 'Medians per run. Findings below now use these numbers.'),
+        h(
+          'div',
+          { class: 'runs-actions' },
+          analyse('Read runs again'),
+          h(
+            'button',
+            {
+              class: 'dismiss',
+              type: 'button',
+              title: 'Timings and statuses of runs read so far are kept in this browser',
+              onclick: () => {
+                this.send({ type: 'cfa:clear-run-cache' });
+                this.setToast('Cached runs cleared.');
+              },
+            },
+            'Clear cached runs',
+          ),
+        ),
+        reading,
+      ),
+    );
+  }
+
+  private targetButton(item: PaneRunTarget): HTMLElement {
+    return h(
+      'button',
+      {
+        class: 'target',
+        type: 'button',
+        title: 'Show in the designer',
+        onclick: () => void this.reveal(item),
+      },
+      `⌖ ${item.targetLabel}`,
+    );
   }
 
   private renderFinding(finding: PaneFinding): HTMLElement {
     const canReveal = finding.target.kind !== 'flow' && finding.target.name !== undefined;
     const target = canReveal
-      ? h(
-          'button',
-          {
-            class: 'target',
-            type: 'button',
-            title: 'Show in the designer',
-            onclick: () => void this.reveal(finding),
-          },
-          `⌖ ${finding.targetLabel}`,
-        )
+      ? this.targetButton(finding)
       : h('span', { class: 'target static' }, finding.targetLabel);
     const example = finding.example
       ? [
@@ -409,15 +577,15 @@ export class Pane {
     );
   }
 
-  private async reveal(finding: PaneFinding): Promise<void> {
-    const name = finding.target.name;
+  private async reveal(item: PaneRunTarget): Promise<void> {
+    const name = item.target.name;
     if (!name) return;
-    this.setToast(`Looking for "${finding.targetLabel}"…`);
+    this.setToast(`Looking for "${item.targetLabel}"…`);
     try {
-      const outcome = await revealAction(name, finding.target.path, {
+      const outcome = await revealAction(name, item.target.path, {
         reservedRight: this.panel.hidden ? 0 : PANE_WIDTH,
         order: this.result?.order ?? [],
-        steps: finding.steps,
+        steps: item.steps,
         onProgress: (text) => this.setToast(text),
       });
       this.setToast(outcome.message, !outcome.ok);

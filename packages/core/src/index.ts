@@ -1,4 +1,10 @@
-export { analyseFlow, runRules, type AnalyseOptions, type FlowAnalysis } from './analyse.ts';
+export {
+  analyseFlow,
+  measure,
+  runRules,
+  type AnalyseOptions,
+  type FlowAnalysis,
+} from './analyse.ts';
 export { anonymise, createAnonymiser, type Anonymiser } from './anonymise.ts';
 export {
   CONNECTOR_NAMES,
@@ -33,6 +39,22 @@ export {
   type RuleContext,
   type RuleMatch,
 } from './rules/index.ts';
+export {
+  isFinished,
+  percentile,
+  readRepetition,
+  readRun,
+  readRunAction,
+  repetitionTargets,
+  runSamplesFromResponses,
+  summariseRuns,
+  type ActionRunStats,
+  type LoopRunStats,
+  type RepetitionRecord,
+  type RunActionRecord,
+  type RunSample,
+  type RunStats,
+} from './runs.ts';
 export {
   CATEGORY_WEIGHT,
   SEVERITY_WEIGHT,

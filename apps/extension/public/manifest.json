@@ -2,8 +2,9 @@
   "manifest_version": 3,
   "name": "Cloud Flow Analyzer",
   "short_name": "Flow Analyzer",
-  "version": "0.1.0",
-  "description": "Speed and resource recommendations for Power Automate cloud flows.",
+  "version": "1.0.0",
+  "description": "Finds slow, wasteful and fragile patterns in Power Automate cloud flows, and shows the better pattern for each.",
+  "homepage_url": "https://leduc212.github.io/cloud-flow-analyzer/",
   "minimum_chrome_version": "116",
   "background": {
     "service_worker": "background.js",

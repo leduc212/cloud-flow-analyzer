@@ -1,23 +1,31 @@
 # Cloud Flow Analyzer
 
-Speed and resource recommendations for Power Automate cloud flows, right in your browser.
+[![CI](https://github.com/leduc212/cloud-flow-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/leduc212/cloud-flow-analyzer/actions/workflows/ci.yml)
+[![Site](https://img.shields.io/badge/site-try%20it-0f6cbd)](https://leduc212.github.io/cloud-flow-analyzer/)
 
-A read-only Edge/Chrome extension that reads your flows, finds slow or wasteful patterns, and
-recommends the better, optimised pattern. No servers, no app registration, nothing leaves your
-browser.
+Finds slow, wasteful and fragile patterns in Power Automate cloud flows, and shows the better
+pattern for each, right next to the designer.
 
-**Status:** M0 (spikes). The rule engine and a capture tool are ready; the full app comes in v0.1.
-See the [project plan](docs/PLAN.md).
+A read-only Edge/Chrome extension: open a flow in the maker portal, click **Analyse this flow**,
+and get a grade, 30 rules' worth of findings based on Microsoft's guidance, and measurements
+from the flow's recent runs. No server, no app registration, nothing leaves your browser.
 
-## What's here
+![The analysis pane next to the designer, after reading recent runs](docs/images/pane-runs.png)
 
-| Path                 | What it is                                                                       |
-| -------------------- | -------------------------------------------------------------------------------- |
-| `packages/core`      | Flow parser, rules, scoring and anonymiser (pure TypeScript, no browser code)    |
-| `apps/extension`     | Manifest V3 extension: popup, in-page analysis pane, token capture, capture tool |
-| `fixtures/flows`     | Sample flows used by the tests (a "before" and "after" flow, a solution flow)    |
-| `scripts/analyse.ts` | Analyse a flow file or a capture file from the command line                      |
-| `docs/PLAN.md`       | Goals, rule catalogue, architecture, milestones                                  |
+- **Try it without installing:** paste a flow definition on the
+  [project site](https://leduc212.github.io/cloud-flow-analyzer/).
+- **Every rule explained:** [rules](https://leduc212.github.io/cloud-flow-analyzer/rules.html).
+- **Privacy:** [policy](https://leduc212.github.io/cloud-flow-analyzer/privacy.html) ·
+  **Security:** [SECURITY.md](SECURITY.md) · **Changes:** [CHANGELOG.md](CHANGELOG.md)
+
+## Install
+
+1. Download `cloud-flow-analyzer-v….zip` from the latest
+   [release](https://github.com/leduc212/cloud-flow-analyzer/releases) and unzip it.
+2. Open `edge://extensions` (or `chrome://extensions`), turn on **Developer mode**, click
+   **Load unpacked** and pick the unzipped folder.
+3. Open [make.powerautomate.com](https://make.powerautomate.com) and sign in (or refresh the tab
+   if it was already open) so the extension picks up your sign-in.
 
 ## Rules
 
@@ -65,7 +73,7 @@ open, the grade can't be better than C.
 
 ## Using it
 
-1. Load the extension (see step 1 and 2 below).
+1. Install the extension (above).
 2. Open a flow in [make.powerautomate.com](https://make.powerautomate.com): its details page or
    the designer.
 3. Click the extension icon, then **Analyse this flow**. A pane opens on the right with the
@@ -96,42 +104,25 @@ Results are kept until you close the browser, and an edited flow is analysed aga
 If clicking an action doesn't move the designer, open **Designer check** at the bottom of the
 pane, copy it and send it to us.
 
-## Capture tool (spikes S1–S3)
+![All flows in an environment, worst grade first](docs/images/all-flows.png)
 
-Step-by-step guide for capturing 20+ real flows: [docs/CAPTURE.md](docs/CAPTURE.md).
+## Capture tool
 
-The capture tool collects real API responses from your tenant so the analyzer can be built and
-checked against real flows. It only reads.
+For troubleshooting and for building new rules: the capture tool (extension icon → **Open
+capture tool**) collects API responses for chosen flows, runs the rules on them and downloads
+everything as one anonymised file. See [docs/CAPTURE.md](docs/CAPTURE.md).
 
-1. **Get the extension**, either:
-   - from GitHub: open the latest **CI** run for this branch → **Artifacts** →
-     `cloud-flow-analyzer-extension`, and unzip it; or
-   - build it: `pnpm install && pnpm build`, then use `apps/extension/dist`.
-2. **Load it:** open `edge://extensions` (or `chrome://extensions`), turn on **Developer mode**,
-   click **Load unpacked** and pick the unzipped folder.
-3. **Sign in:** open [make.powerautomate.com](https://make.powerautomate.com), pick an environment,
-   and open a few flows and their run history. This lets the extension pick up the portal's
-   token and see which API endpoints the portal uses.
-4. **Open the capture tool:** click the extension's toolbar icon.
-5. **Capture:** Load environments → pick one → Load flows (tick **Admin** if you're an
-   environment admin) → select 20 or more flows. Include loops, conditions, switches, Do until,
-   child flows, HTTP actions, and both solution and non-solution flows. Then **Capture selected
-   flows** (5 runs per flow is enough).
-6. **Check the findings** on the page and note anything that looks wrong.
-7. **Download** the capture (anonymised by default). Open the file and check that nothing
-   sensitive is left, then save it as `fixtures/captures/<yyyy-mm-dd>.json` and push it to the
-   working branch. Raw (not anonymised) files end in `.raw.json` and are ignored by git.
+## What's here
 
-### What the extension stores
-
-- The portal's access token, only in `chrome.storage.session`: in memory, never on disk, cleared
-  when the browser closes, and readable only by the extension itself. It's never logged and
-  never written to a capture file.
-- A list of API endpoints the portal called (IDs and names replaced), also in session storage.
-- Captured responses stay in the capture page's memory until you download or clear them.
-
-Permissions: `webRequest` (to read the portal's request headers; it never blocks or changes
-requests), `storage`, `scripting` (to add the analysis pane to the portal page when you ask), and access to the Power Automate API hosts and the maker portals.
+| Path                 | What it is                                                                    |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `packages/core`      | Flow parser, rules, scoring and anonymiser (pure TypeScript, no browser code) |
+| `apps/extension`     | Manifest V3 extension: popup, analysis pane, All flows page, capture tool     |
+| `apps/web`           | Project site: paste-a-flow demo, rule docs, privacy policy (GitHub Pages)     |
+| `fixtures/flows`     | Sample flows used by the tests (a "before" and "after" flow, a solution flow) |
+| `scripts/analyse.ts` | Analyse a flow file or a capture file from the command line                   |
+| `docs/PLAN.md`       | Goals, rule catalogue, architecture, milestones                               |
+| `docs/STORE.md`      | Store listing text and permission justifications                              |
 
 ## Development
 
@@ -144,7 +135,14 @@ pnpm test             # unit tests
 pnpm build && pnpm test:e2e   # browser tests: the built extension in Chromium
 pnpm --filter @cfa/extension dev    # rebuild the extension on change
 pnpm analyse fixtures/flows/sync-contacts-bad.json   # analyse a flow or capture file
+pnpm --filter @cfa/web dev          # the project site
+SCREENSHOTS=1 pnpm test:e2e screenshots   # refresh docs/images
 ```
+
+Releases: bump the version in `apps/extension/public/manifest.json`, add a `CHANGELOG.md`
+section, and push a `v<version>` tag; the Release workflow publishes the zip. The site deploys
+from `main` (Settings → Pages → Source: GitHub Actions). Store listing text:
+[docs/STORE.md](docs/STORE.md).
 
 ## Licence
 

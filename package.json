@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "analyse": "node scripts/analyse.ts",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm build",
+    "test:e2e": "pnpm --filter @cfa/extension test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

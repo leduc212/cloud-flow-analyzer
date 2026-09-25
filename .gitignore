@@ -7,3 +7,5 @@ coverage/
 # Raw (not anonymised) capture files never go in git
 fixtures/captures/raw/
 *.raw.json
+test-results/
+playwright-report/

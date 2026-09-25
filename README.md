@@ -47,16 +47,20 @@ Each finding explains why it matters, how to fix it, and shows the better patter
    the designer.
 3. Click the extension icon, then **Analyse this flow**. A pane opens on the right with the
    grade and the findings.
-4. Click an action name in a finding (⌖) to jump to it in the designer. Collapsed scopes, loops
-   and conditions on the way are opened for you (only ones that are collapsed; nothing else in
-   the designer is touched).
-5. **How to fix** under each finding explains the better pattern, with a before/after and a link
+4. Click an action name in a finding (⌖) to jump to it in the designer, even when it's far
+   down the flow. Collapsed scopes, loops, Condition branches and Switch cases on the way are
+   opened for you (only ones that are collapsed; nothing else in the designer is touched).
+5. **Dismiss** findings you've decided to keep (remembered per flow in your browser and left out
+   of the score), and **⧉ Copy report** to paste the findings as Markdown into a ticket or chat.
+6. **How to fix** under each finding explains the better pattern, with a before/after and a link
    to the Microsoft docs.
 
 If clicking an action doesn't move the designer, open **Designer check** at the bottom of the
 pane, copy it and send it to us.
 
 ## Capture tool (spikes S1–S3)
+
+Step-by-step guide for capturing 20+ real flows: [docs/CAPTURE.md](docs/CAPTURE.md).
 
 The capture tool collects real API responses from your tenant so the analyzer can be built and
 checked against real flows. It only reads.
@@ -98,7 +102,8 @@ Needs Node 22 and pnpm 10.
 ```sh
 pnpm install
 pnpm check            # lint, format check, typecheck, tests, build
-pnpm test             # tests only
+pnpm test             # unit tests
+pnpm build && pnpm test:e2e   # browser tests: the built extension in Chromium
 pnpm --filter @cfa/extension dev    # rebuild the extension on change
 pnpm analyse fixtures/flows/sync-contacts-bad.json   # analyse a flow or capture file
 ```

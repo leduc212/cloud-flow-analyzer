@@ -3,7 +3,7 @@
 > **Speed and resource recommendations for Power Automate cloud flows, right in your browser.**
 > A browser extension (Edge/Chrome) that reads your flows and their recent runs, finds slow or wasteful patterns, and tells you how to fix them.
 
-Status: M0 (spikes: S1 and S2 done, S3 needs 20+ flows) · Drafted 2026-09-25 · Revised 2026-09-25 after review and owner decisions (see §12) · Owner: LEMD (leduc212)
+Status: v0.1 (pane shipped; rule tuning waits on the 20+ flow capture) · Drafted 2026-09-25 · Revised 2026-09-25 after review and owner decisions (see §12) · Owner: LEMD (leduc212)
 
 ---
 
@@ -326,24 +326,27 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 - **S2 Run payloads:** fetch runs, actions and loop repetitions for a looping flow; confirm the timing fields and retry info; measure request counts and throttling.
 - **S3 Parser coverage:** parse 20+ real (anonymised) definitions covering Scope, If, Switch, Foreach, Until, Workflow and HTTP without errors.
 
-### v0.1: Definition analysis
-- Extension shell, token capture, environment picker, Flows list.
-- Parser → ActionTree; Flow report with the action tree.
-- Rules that work from the definition: SPD01, SPD02, SPD03, SPD04, SPD07, SPD08, SPD10, RES02, RES03, RES04, REL01, REL02, REL04, REL05, each with fixtures and tests.
-- *Done when:* analysing a real flow shows correct findings pinned to the right actions.
+### v0.1: Definition analysis in the portal (the pane is the product)
+- ✅ Popup (Analyse this flow / Open capture tool) and the in-page analysis pane: grade, scores, estimate, findings with severity filters, how to fix / why / before-after / docs.
+- ✅ Click an action to jump to it in the designer: pans the canvas, finds actions the designer hasn't drawn yet, opens collapsed scopes, loops, Condition branches and Switch cases on the way.
+- ✅ Rules that work from the definition: SPD01, SPD02, SPD03, SPD04, SPD07, SPD08, SPD10, RES02, RES03, RES04, REL01, REL02, REL04, REL05, each with fixtures and tests.
+- ✅ Dismiss findings (remembered per flow in the browser, left out of the score), copy the report as Markdown, actionable error messages.
+- ✅ Browser tests in CI (extension in Chromium against a test designer); release workflow publishing a zip for each `v*` tag.
+- ⏳ Tune the rules against 20+ captured real flows (S3), see [the capture guide](CAPTURE.md).
+- *Done when:* analysing real flows shows correct findings, pinned to the right actions, with few false alarms.
 
-### v0.2: Run analysis
-- Sampling, rate-limited queue, IndexedDB cache, Run profile page.
-- 📊 versions of SPD01, SPD03, SPD07; new rules RES01, RES06, REL03; estimated vs. measured actions per run.
+### v0.2: Run analysis in the pane
+- "Analyse recent runs" in the pane: sampling, rate-limited queue, cache; slowest actions, loop iterations, throttling per action.
+- 📊 versions of SPD01, SPD03, SPD07 (rank by measured time share); new rules RES01, RES06, REL03; estimated vs. measured actions per run.
 - *Done when:* the slowest action and loop iteration numbers match what the portal's run history shows.
 
-### v0.3: Environment and scoring
-- "Analyse all" (definition-only) with scores in the Flows list; filters.
-- Accepted findings; remaining rules (SPD05, SPD09, RES05, RES07, REL06, MNT02).
+### v0.3: Environment and remaining rules
+- "Analyse all": an extension page listing every flow in an environment with its grade and top findings (pre-screened from each flow's `definitionSummary`), linking to the flow so the pane can take over. This replaces the separate full-page Flows app of the first plan.
+- Remaining rules (SPD05, SPD09, RES05, RES07, REL06, MNT02).
 - Demo site on GitHub Pages: sample flows plus a "paste a flow definition JSON" mode. Make the repo public at this point.
 
 ### v1.0: Polish and publish
-- Export the report (Markdown/HTML), docs page per rule, README GIF, accessibility check, Edge Add-ons listing (+ Chrome Web Store if decided).
+- Docs page per rule, README GIF, accessibility check, security review, privacy policy, Edge Add-ons listing (+ Chrome Web Store if decided).
 
 ---
 
@@ -373,6 +376,7 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 9. Repo goes public at v0.3 (needed for free Pages and CodeQL).
 10. Scoring formula as in §5.
 11. Stack: React 19, TypeScript 6.0, plain Vite multi-entry build.
+12. **The in-page pane is the product** (2026-09-25): analysis happens on the flow's own page, next to the designer. The full-page Flows app is dropped; the environment view becomes "Analyse all" in v0.3. The pane is plain TypeScript (no React needed so far).
 
 ---
 

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Cloud Flow Analyzer",
   "short_name": "Flow Analyzer",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Speed and resource recommendations for Power Automate cloud flows.",
   "minimum_chrome_version": "116",
   "background": {

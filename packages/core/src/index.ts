@@ -32,6 +32,7 @@ export {
 } from './parser.ts';
 export {
   DOCS,
+  docLabel,
   RULES,
   RULES_BY_ID,
   getRule,

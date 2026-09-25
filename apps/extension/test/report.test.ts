@@ -130,3 +130,14 @@ describe('friendlyError', () => {
     expect(friendlyError(error)).toContain(text);
   });
 });
+
+describe('finding links', () => {
+  it('links each finding to its rule page and titles the Microsoft docs', () => {
+    const spd01 = result.findings.find((f) => f.ruleId === 'SPD01')!;
+    expect(spd01.ruleUrl).toBe('https://leduc212.github.io/cloud-flow-analyzer/rules.html#SPD01');
+    expect(spd01.docs[0]).toEqual({
+      url: 'https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/implement-parallel-execution',
+      title: 'Implement parallel execution',
+    });
+  });
+});

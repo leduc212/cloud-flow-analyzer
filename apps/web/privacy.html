@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloud Flow Analyzer · Privacy</title>
+    <link rel="icon" href="./favicon.png" />
+  </head>
+  <body>
+    <header class="site">
+      <a class="brand" href="./index.html"
+        ><img src="./favicon.png" alt="" width="20" height="20" />Cloud Flow Analyzer</a
+      >
+      <nav aria-label="Site">
+        <a href="./index.html">Try it</a>
+        <a href="./rules.html">Rules</a>
+        <a href="./privacy.html">Privacy</a>
+        <a href="https://github.com/leduc212/cloud-flow-analyzer">GitHub</a>
+      </nav>
+    </header>
+    <main class="prose">
+      <h1>Privacy policy</h1>
+      <p><i>Last updated 25 September 2026.</i></p>
+      <p>
+        Cloud Flow Analyzer is a browser extension that analyses Power Automate cloud flows. It has
+        no server: it collects nothing, sends nothing to its authors or anyone else, and has no
+        analytics or tracking.
+      </p>
+      <h2>What the extension reads</h2>
+      <ul>
+        <li>
+          <b>Your Power Automate sign-in.</b> When the maker portal (make.powerautomate.com or
+          make.powerapps.com) calls the Power Automate and Power Platform APIs, the extension reads
+          the access token from those requests. It is kept in the browser's session storage (memory
+          only, cleared when the browser closes), never written to disk, never logged, and only sent
+          back to the same Microsoft APIs.
+        </li>
+        <li>
+          <b>Flow definitions and run history</b>, which it requests from the same Microsoft APIs
+          with that token, only when you ask (Analyse this flow, Analyse recent runs, Analyse all).
+          It only reads: it never creates, changes or deletes anything.
+        </li>
+      </ul>
+      <h2>What it keeps in your browser</h2>
+      <ul>
+        <li>Findings you dismissed, per flow (browser local storage).</li>
+        <li>The daily request limit you picked, if any (browser local storage).</li>
+        <li>
+          For runs it has read: run and action names, statuses, error codes and times, never the
+          data inside the runs (IndexedDB, removed after 30 days or with
+          <b>Clear cached runs</b>).
+        </li>
+        <li>
+          Results of <b>Analyse all</b> (grades and top findings) until the browser closes (session
+          storage).
+        </li>
+      </ul>
+      <p>Removing the extension removes all of it.</p>
+      <h2>The capture tool</h2>
+      <p>
+        The extension includes a capture tool for troubleshooting. It builds a file from API
+        responses only when you click Download, anonymised by default, and it's up to you whether to
+        share it.
+      </p>
+      <h2>This website</h2>
+      <p>
+        The analysis on this site runs in your browser; what you paste is not uploaded. The site is
+        hosted on GitHub Pages, which may log visits as described in
+        <a
+          href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement"
+          >GitHub's privacy statement</a
+        >.
+      </p>
+      <h2>Contact</h2>
+      <p>
+        Questions or concerns: open an issue on
+        <a href="https://github.com/leduc212/cloud-flow-analyzer/issues">GitHub</a>.
+      </p>
+    </main>
+    <footer>MIT licence · Not affiliated with Microsoft.</footer>
+    <script type="module" src="./src/privacy.ts"></script>
+  </body>
+</html>

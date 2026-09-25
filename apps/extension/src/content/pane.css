@@ -518,3 +518,8 @@ footer details button {
 .runs .dismiss[hidden] {
   display: none;
 }
+
+.docs {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}

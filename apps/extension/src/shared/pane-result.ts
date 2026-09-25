@@ -1,5 +1,6 @@
 import {
   ancestors,
+  docLabel,
   getRule,
   label,
   type ActionNode,
@@ -36,7 +37,10 @@ export interface PaneFinding {
   why: string;
   fix: string;
   example?: { before: string; after: string };
-  docs: string[];
+  /** Microsoft docs, with readable titles. */
+  docs: { url: string; title: string }[];
+  /** The rule's page on the project site. */
+  ruleUrl: string;
   blockedBy?: string[];
   /** What recent runs measured (time share, loop items), when runs were analysed. */
   evidence?: FindingEvidence;
@@ -47,6 +51,13 @@ export interface PaneRunTarget {
   target: FindingTarget;
   targetLabel: string;
   steps: PathStep[];
+}
+
+export const SITE_URL = 'https://leduc212.github.io/cloud-flow-analyzer/';
+
+/** A rule's section on the rules page of the project site. */
+export function ruleDocsUrl(ruleId: string): string {
+  return `${SITE_URL}rules.html#${ruleId}`;
 }
 
 /** What the worker read about the runs, besides the samples themselves. */
@@ -236,7 +247,8 @@ export function buildPaneResult(
         why: rule?.why ?? '',
         fix: finding.fix ?? rule?.fix ?? '',
         ...(rule?.example ? { example: rule.example } : {}),
-        docs: rule?.docs ?? [],
+        docs: (rule?.docs ?? []).map((url) => ({ url, title: docLabel(url) })),
+        ruleUrl: ruleDocsUrl(finding.ruleId),
         ...(finding.blockedBy ? { blockedBy: finding.blockedBy } : {}),
         ...(finding.evidence ? { evidence: finding.evidence } : {}),
       };

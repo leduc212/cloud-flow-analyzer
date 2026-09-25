@@ -75,6 +75,22 @@ export const DOCS = {
     'https://learn.microsoft.com/en-us/power-platform/admin/power-automate-licensing/faqs#what-counts-as-an-action',
 } as const;
 
+/**
+ * A readable title for a docs link, from its address: `…/implement-parallel-execution` →
+ * "Implement parallel execution" (the anchor wins when there is one).
+ */
+export function docLabel(url: string): string {
+  let slug = url;
+  try {
+    const parsed = new URL(url);
+    slug = parsed.hash.slice(1) || parsed.pathname.split('/').filter(Boolean).pop() || url;
+  } catch {
+    // Not a URL: use it as it is.
+  }
+  const words = slug.replace(/[-_]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function actionTarget(node: ActionNode): FindingTarget {
   return { kind: 'action', name: node.name, path: node.path };
 }

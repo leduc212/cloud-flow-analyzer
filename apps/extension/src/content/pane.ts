@@ -692,11 +692,29 @@ export class Pane {
         h('div', { class: 'label' }, 'Why it matters'),
         h('p', {}, finding.why),
         ...example,
-        ...finding.docs.map((url) =>
+        h('div', { class: 'label' }, 'Read more'),
+        h(
+          'ul',
+          { class: 'docs' },
           h(
-            'div',
+            'li',
             {},
-            h('a', { href: url, target: '_blank', rel: 'noreferrer' }, 'Microsoft docs'),
+            h(
+              'a',
+              { href: finding.ruleUrl, target: '_blank', rel: 'noreferrer' },
+              `About ${finding.ruleId}`,
+            ),
+          ),
+          ...finding.docs.map((doc) =>
+            h(
+              'li',
+              {},
+              h(
+                'a',
+                { href: doc.url, target: '_blank', rel: 'noreferrer' },
+                `Microsoft: ${doc.title}`,
+              ),
+            ),
           ),
         ),
       ),

@@ -20,4 +20,4 @@ export function getRule(id: string): Rule | undefined {
 }
 
 export type { Rule, RuleContext, RuleMatch, RunSampleMode } from './rule.ts';
-export { DOCS } from './rule.ts';
+export { DOCS, docLabel } from './rule.ts';

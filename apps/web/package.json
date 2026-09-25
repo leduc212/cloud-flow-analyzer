@@ -1,0 +1,24 @@
+{
+  "name": "@cfa/web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud Flow Analyzer demo site: analyse a pasted flow definition, rule docs, privacy policy.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cfa/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "jsdom": "^30.1.1",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.1"
+  }
+}

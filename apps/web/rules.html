@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloud Flow Analyzer · Rules</title>
+    <meta
+      name="description"
+      content="Every rule Cloud Flow Analyzer checks, why it matters and the better pattern."
+    />
+    <link rel="icon" href="./favicon.png" />
+  </head>
+  <body>
+    <header class="site">
+      <a class="brand" href="./index.html"
+        ><img src="./favicon.png" alt="" width="20" height="20" />Cloud Flow Analyzer</a
+      >
+      <nav aria-label="Site">
+        <a href="./index.html">Try it</a>
+        <a href="./rules.html">Rules</a>
+        <a href="./privacy.html">Privacy</a>
+        <a href="https://github.com/leduc212/cloud-flow-analyzer">GitHub</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Rules</h1>
+      <p class="lead">
+        What each rule finds, why it matters, and how to fix it, with a before and after and
+        Microsoft's docs. 📊 marks rules that use measurements from recent runs when you analyse
+        them in the extension. Scores: each category starts at 100 and loses points per finding
+        (high 25, medium 10, low 3, times the rule's confidence); the grade weighs speed 35%,
+        resources 25%, reliability 25% and security 15%, and an open high security finding caps it
+        at C. Maintainability findings don't count toward the grade.
+      </p>
+      <nav id="toc" class="toc" aria-label="Rules by category"></nav>
+      <div id="rules"></div>
+    </main>
+    <footer>MIT licence · Not affiliated with Microsoft.</footer>
+    <script type="module" src="./src/rules-page.ts"></script>
+  </body>
+</html>

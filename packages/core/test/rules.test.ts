@@ -3,7 +3,7 @@ import bad from '../../../fixtures/flows/sync-contacts-bad.json' with { type: 'j
 import good from '../../../fixtures/flows/sync-contacts-good.json' with { type: 'json' };
 import clientdata from '../../../fixtures/flows/poll-orders-clientdata.json' with { type: 'json' };
 import { analyseFlow } from '../src/analyse.ts';
-import { RULES } from '../src/rules/index.ts';
+import { RULES, docLabel } from '../src/rules/index.ts';
 import {
   chain,
   childFlow,
@@ -878,5 +878,21 @@ describe('robustness', () => {
     const result = analyseFlow(flow({ A: compose(1) }), { rules: [exploding] });
     expect(result.findings).toEqual([]);
     expect(result.warnings).toEqual(['Rule BOOM failed: bad']);
+  });
+});
+
+describe('docLabel', () => {
+  it('turns docs addresses into readable titles', () => {
+    expect(
+      docLabel(
+        'https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/implement-parallel-execution',
+      ),
+    ).toBe('Implement parallel execution');
+    expect(
+      docLabel(
+        'https://learn.microsoft.com/en-us/power-platform/admin/power-automate-licensing/faqs#what-counts-as-an-action',
+      ),
+    ).toBe('What counts as an action');
+    for (const rule of RULES) for (const url of rule.docs) expect(docLabel(url)).not.toBe('');
   });
 });

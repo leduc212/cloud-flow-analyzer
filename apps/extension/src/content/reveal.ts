@@ -250,9 +250,97 @@ export function highlight(element: HTMLElement): void {
   highlightTimer = setTimeout(() => outline.remove(), 3000);
 }
 
+const TOGGLE_SELECTORS = [
+  '.msla-collapse-toggle',
+  '[class*="collapse-toggle"]',
+  'button[aria-expanded]',
+  'button[aria-label*="expand" i]',
+  'button[aria-label*="collapse" i]',
+  'button[title*="expand" i]',
+  'button[title*="collapse" i]',
+];
+
+/** The card that holds a container's expand/collapse button (scope header first). */
+function containerCard(name: string, documents = searchDocuments()): HTMLElement | undefined {
+  const id = CSS.escape(name);
+  for (const doc of documents) {
+    const header = doc.querySelector<HTMLElement>(`.react-flow__node[data-id="${id}-#scope"]`);
+    if (header) return header;
+  }
+  return findActionElement(name, documents);
+}
+
+export function findCollapseToggle(card: HTMLElement): HTMLElement | undefined {
+  for (const selector of TOGGLE_SELECTORS) {
+    const toggle = card.querySelector<HTMLElement>(selector);
+    if (toggle) return toggle;
+  }
+  return undefined;
+}
+
+/** Whether a toggle says its container is collapsed. Labels may be localised, so 'unknown' is common. */
+export function toggleState(toggle: HTMLElement): 'collapsed' | 'expanded' | 'unknown' {
+  const expanded = toggle.getAttribute('aria-expanded');
+  if (expanded === 'false') return 'collapsed';
+  if (expanded === 'true') return 'expanded';
+  const text = norm(
+    `${toggle.getAttribute('aria-label') ?? ''} ${toggle.getAttribute('title') ?? ''} ${toggle.textContent ?? ''}`,
+  );
+  const saysExpand = /\bexpand/.test(text);
+  const saysCollapse = /\bcollapse/.test(text);
+  if (saysExpand && !saysCollapse) return 'collapsed';
+  if (saysCollapse && !saysExpand) return 'expanded';
+  return 'unknown';
+}
+
+async function waitFor<T>(find: () => T | undefined, timeout = 2500): Promise<T | undefined> {
+  const end = Date.now() + timeout;
+  for (;;) {
+    const found = find();
+    if (found || Date.now() > end) return found;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+export interface ExpandOutcome {
+  /** Containers this call expanded, outermost first. */
+  expanded: string[];
+  /** The container that couldn't be opened, when the action is still hidden. */
+  blockedAt?: string;
+}
+
+/**
+ * Opens the collapsed scopes, loops and conditions on the way to an action, outermost first.
+ * Only clicks a toggle that says it is collapsed, or, when it can't tell, clicks it and undoes
+ * the click if the next step doesn't appear, so expanded containers are never left collapsed.
+ */
+export async function expandPath(path: string[]): Promise<ExpandOutcome> {
+  const expanded: string[] = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    const parent = path[i] ?? '';
+    const child = path[i + 1] ?? '';
+    if (findActionElement(child)) continue;
+    const card = containerCard(parent);
+    const toggle = card && findCollapseToggle(card);
+    if (!toggle) return { expanded, blockedAt: parent };
+    const state = toggleState(toggle);
+    if (state === 'expanded') return { expanded, blockedAt: parent };
+    toggle.click();
+    if (!(await waitFor(() => findActionElement(child)))) {
+      if (state === 'unknown') {
+        // We may have collapsed an open container: put it back.
+        findCollapseToggle(containerCard(parent) ?? toggle)?.click();
+      }
+      return { expanded, blockedAt: parent };
+    }
+    expanded.push(parent);
+  }
+  return { expanded };
+}
+
 /**
  * Brings an action into view and highlights it. `path` is the action's position in the flow
- * (parents first), used to point at the enclosing scope when the action itself is hidden.
+ * (parents first); collapsed parents on that path are expanded first.
  */
 export async function revealAction(
   name: string,
@@ -261,25 +349,31 @@ export async function revealAction(
 ): Promise<RevealOutcome> {
   const reservedRight = options.reservedRight ?? 0;
   const find = () => findActionElement(name);
-  const element = find();
+  let element = find();
+  let expanded: string[] = [];
   if (!element) {
     if (!isDesignerOpen()) {
       return { ok: false, message: 'Open the flow in the designer (Edit) to jump to actions.' };
     }
-    // Probably inside a collapsed scope, loop or condition: show the nearest visible parent.
-    for (const parent of [...path.slice(0, -1)].reverse()) {
-      if (findActionElement(parent)) {
+    // Probably inside collapsed scopes, loops or conditions: open them.
+    const outcome = await expandPath(path.length > 0 ? path : [name]);
+    expanded = outcome.expanded;
+    element = find();
+    if (!element) {
+      const parent =
+        outcome.blockedAt ?? [...path.slice(0, -1)].reverse().find((p) => findActionElement(p));
+      if (parent && findActionElement(parent)) {
         await revealAction(parent, [], options);
         return {
           ok: false,
-          message: `"${label(name)}" is inside "${label(parent)}", which looks collapsed. Expand it, then click again.`,
+          message: `"${label(name)}" is inside "${label(parent)}", which couldn't be opened automatically. Expand it (or the branch the action is in), then click again.`,
         };
       }
+      return {
+        ok: false,
+        message: `Couldn't find "${label(name)}" in the designer. If it's inside a collapsed step, expand it and click again.`,
+      };
     }
-    return {
-      ok: false,
-      message: `Couldn't find "${label(name)}" in the designer. If it's inside a collapsed step, expand it and click again.`,
-    };
   }
 
   const canvas = canvasOf(element);
@@ -302,7 +396,10 @@ export async function revealAction(
       message: `Found "${label(name)}" but couldn't move the canvas to it. Copy the designer check below and send it to us.`,
     };
   }
-  return { ok: true, message: `Showing "${label(name)}".` };
+  const opened = expanded.length
+    ? ` (opened ${expanded.map((e) => `"${label(e)}"`).join(' › ')})`
+    : '';
+  return { ok: true, message: `Showing "${label(name)}"${opened}.` };
 }
 
 function canRead(frame: HTMLIFrameElement): boolean {
@@ -337,6 +434,21 @@ export function designerCheck(documents: Document[] = searchDocuments()): Record
     nodeIds: nodes.slice(0, 25).map((n) => n.dataset.id ?? null),
     nodeClasses: [...new Set(nodes.slice(0, 25).map((n) => n.className))].slice(0, 5),
     cardTitles: titles.slice(0, 15).map((t) => t.textContent?.trim()),
+    toggles: nodes
+      .map((n) => {
+        const toggle = findCollapseToggle(n);
+        return toggle
+          ? {
+              node: n.dataset.id ?? null,
+              class: toggle.className,
+              label: toggle.getAttribute('aria-label'),
+              expanded: toggle.getAttribute('aria-expanded'),
+              state: toggleState(toggle),
+            }
+          : undefined;
+      })
+      .filter(Boolean)
+      .slice(0, 15),
     frames: [...document.querySelectorAll('iframe')].map((f) => ({
       host: f.src ? new URL(f.src, location.href).host : '',
       sameOrigin: canRead(f),

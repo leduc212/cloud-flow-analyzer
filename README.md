@@ -47,8 +47,9 @@ Each finding explains why it matters, how to fix it, and shows the better patter
    the designer.
 3. Click the extension icon, then **Analyse this flow**. A pane opens on the right with the
    grade and the findings.
-4. Click an action name in a finding (⌖) to jump to it in the designer. If it's inside a
-   collapsed step, the pane jumps to that step and asks you to expand it.
+4. Click an action name in a finding (⌖) to jump to it in the designer. Collapsed scopes, loops
+   and conditions on the way are opened for you (only ones that are collapsed; nothing else in
+   the designer is touched).
 5. **How to fix** under each finding explains the better pattern, with a before/after and a link
    to the Microsoft docs.
 

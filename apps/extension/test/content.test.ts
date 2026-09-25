@@ -5,9 +5,11 @@ import { analyseFlow } from '@cfa/core';
 import { HOST_ID, Pane } from '../src/content/pane.ts';
 import {
   designerCheck,
+  expandPath,
   findActionElement,
   isDesignerOpen,
   revealAction,
+  toggleState,
 } from '../src/content/reveal.ts';
 import { buildPaneResult } from '../src/shared/pane-result.ts';
 
@@ -66,6 +68,98 @@ describe('revealAction', () => {
       <div class="react-flow"><div class="react-flow__pane"></div>
       <div class="react-flow__node" data-id="A">a</div></div>`;
     expect(designerCheck()).toMatchObject({ designerFound: true, nodeCount: 1, nodeIds: ['A'] });
+  });
+});
+
+/**
+ * A tiny designer: each container has a header node with a toggle; clicking it shows or hides
+ * the container's children, like the new designer's collapse button.
+ */
+function designer(
+  containers: Record<string, { children: string[]; collapsed: boolean; label?: 'aria' | 'none' }>,
+) {
+  document.body.innerHTML = '<div class="react-flow"></div>';
+  const canvas = document.querySelector('.react-flow')!;
+  const visible = (name: string): boolean =>
+    Object.entries(containers).every(
+      ([parent, c]) => !c.children.includes(name) || (!c.collapsed && visible(parent)),
+    );
+  const all = new Set([
+    ...Object.keys(containers),
+    ...Object.values(containers).flatMap((c) => c.children),
+  ]);
+  const render = () => {
+    canvas.innerHTML = '';
+    for (const name of all) {
+      if (!visible(name)) continue;
+      const container = containers[name];
+      const node = document.createElement('div');
+      node.className = 'react-flow__node';
+      node.dataset.id = container ? `${name}-#scope` : name;
+      if (container) {
+        const toggle = document.createElement('button');
+        toggle.className = 'msla-collapse-toggle';
+        if (container.label !== 'none') {
+          toggle.setAttribute('aria-label', container.collapsed ? 'Expand' : 'Collapse');
+        }
+        toggle.addEventListener('click', () => {
+          container.collapsed = !container.collapsed;
+          render();
+        });
+        node.append(toggle);
+      }
+      canvas.append(node);
+    }
+  };
+  render();
+  return containers;
+}
+
+describe('expandPath', () => {
+  it('opens collapsed parents, outermost first', async () => {
+    designer({
+      Scope_OCR: { children: ['Loop'], collapsed: true },
+      Loop: { children: ['Create_Non-PO_4'], collapsed: true },
+    });
+    expect(findActionElement('Create_Non-PO_4')).toBeUndefined();
+    const outcome = await expandPath(['Scope_OCR', 'Loop', 'Create_Non-PO_4']);
+    expect(outcome).toEqual({ expanded: ['Scope_OCR', 'Loop'] });
+    expect(findActionElement('Create_Non-PO_4')).toBeDefined();
+  });
+
+  it('leaves already open parents alone', async () => {
+    const state = designer({
+      Scope_OCR: { children: ['Loop'], collapsed: false },
+      Loop: { children: ['Create_Non-PO_4'], collapsed: true },
+    });
+    const outcome = await expandPath(['Scope_OCR', 'Loop', 'Create_Non-PO_4']);
+    expect(outcome.expanded).toEqual(['Loop']);
+    expect(state.Scope_OCR?.collapsed).toBe(false);
+  });
+
+  it('never clicks a toggle that says it is open, even if the action is missing', async () => {
+    const state = designer({ Switch: { children: ['Other'], collapsed: false } });
+    const outcome = await expandPath(['Switch', 'Hidden_in_a_case']);
+    expect(outcome).toEqual({ expanded: [], blockedAt: 'Switch' });
+    expect(state.Switch?.collapsed).toBe(false);
+  });
+
+  it('undoes a click on an unlabelled toggle that did not help', async () => {
+    const state = designer({ Scope: { children: ['Other'], collapsed: false, label: 'none' } });
+    const outcome = await expandPath(['Scope', 'Hidden']);
+    expect(outcome.blockedAt).toBe('Scope');
+    expect(state.Scope?.collapsed).toBe(false);
+  }, 10_000);
+
+  it('reads toggle state from aria-expanded or the label', () => {
+    const toggle = document.createElement('button');
+    toggle.setAttribute('aria-expanded', 'false');
+    expect(toggleState(toggle)).toBe('collapsed');
+    toggle.removeAttribute('aria-expanded');
+    toggle.setAttribute('aria-label', 'Collapse');
+    expect(toggleState(toggle)).toBe('expanded');
+    toggle.setAttribute('aria-label', 'Thu gọn');
+    expect(toggleState(toggle)).toBe('unknown');
   });
 });
 

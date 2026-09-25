@@ -71,7 +71,7 @@ The two hosts use **different token audiences** (`https://service.flow.microsoft
 1. The user opens a flow in make.powerautomate.com (or make.powerapps.com): its details page or the designer.
 2. Clicks the extension icon. A **popup** offers: **Analyse this flow** (enabled on flow pages) and **Open capture tool** (later: the full app tab).
 3. **Analyse this flow** opens an **analysis pane** on the right of the portal page: grade, category scores, estimated actions per run, and the findings, filterable by severity. Each finding expands to how to fix it, why it matters, before/after and Microsoft docs.
-4. Clicking a finding's action **pans the designer to that action** and highlights it. If the action is inside a collapsed scope, the pane pans to the scope and says to expand it. A "Designer check" in the pane can be copied when the designer can't be found or moved.
+4. Clicking a finding's action **pans the designer to that action** and highlights it, first **expanding any collapsed scopes, loops or conditions** on its path (outermost first). It only clicks a toggle that says it is collapsed, or undoes the click if it can't tell and the click didn't help. If a parent still can't be opened (e.g. a collapsed Switch case), the pane pans to it and says so. A "Designer check" in the pane can be copied when the designer can't be found or moved.
 5. When the user opens another flow, the pane offers to analyse it.
 
 **Full app tab (v0.3):**
@@ -80,7 +80,7 @@ The two hosts use **different token audiences** (`https://service.flow.microsoft
 
 The extension reads the token's expiry time. Shortly before it expires (about 60–90 minutes after sign-in), it asks the user to keep a portal tab open or refresh it; new tokens are picked up automatically.
 
-**How the pane works:** the popup asks the background worker to analyse the tab. The worker injects the pane (a content script with its UI in a shadow root), fetches the flow with the captured token, analyses it and sends only the result to the pane; the page never sees the token. The new designer is a React Flow canvas (`.react-flow__node[data-id="<action>"]`) that pans by transform, so the pane pans it the way a user does (dragging the empty canvas, then the scroll wheel), measuring after each step until the action is centred; the classic designer scrolls, so `scrollIntoView` is used. It never clicks or edits anything in the designer.
+**How the pane works:** the popup asks the background worker to analyse the tab. The worker injects the pane (a content script with its UI in a shadow root), fetches the flow with the captured token, analyses it and sends only the result to the pane; the page never sees the token. The new designer is a React Flow canvas (`.react-flow__node[data-id="<action>"]`) that pans by transform, so the pane pans it the way a user does (dragging the empty canvas, then the scroll wheel), measuring after each step until the action is centred; the classic designer scrolls, so `scrollIntoView` is used. Apart from opening collapsed containers on the way, it never clicks or edits anything in the designer.
 
 ### Screens
 ```

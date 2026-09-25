@@ -134,3 +134,56 @@ export function resolveConnector(
   }
   return undefined;
 }
+
+export const KEY_VAULT = 'shared_keyvault';
+CONNECTOR_NAMES[KEY_VAULT] = 'Azure Key Vault';
+
+/** Operations that return a secret (Key Vault). */
+export const SECRET_OPERATIONS: Record<string, string[]> = {
+  [KEY_VAULT]: ['GetSecret', 'GetSecretVersion'],
+};
+
+export function isSecretOperation(connector?: string, operationId?: string): boolean {
+  return Boolean(connector && operationId && SECRET_OPERATIONS[connector]?.includes(operationId));
+}
+
+/** Operations that write one record (create, update, delete). */
+export const WRITE_OPERATIONS: Record<string, Record<string, string>> = {
+  [DATAVERSE]: {
+    CreateRecord: 'Add a new row',
+    UpdateRecord: 'Update a row',
+    UpdateOnlyRecord: 'Update a row',
+    DeleteRecord: 'Delete a row',
+  },
+  [SHAREPOINT]: { PostItem: 'Create item', PatchItem: 'Update item', DeleteItem: 'Delete item' },
+  [SQL]: {
+    PostItem_V2: 'Insert row (V2)',
+    PatchItem_V2: 'Update row (V2)',
+    DeleteItem_V2: 'Delete row (V2)',
+  },
+  [EXCEL]: {
+    AddRowV2: 'Add a row into a table',
+    PatchItem: 'Update a row',
+    DeleteItem: 'Delete a row',
+  },
+};
+
+export function writeOperation(connector?: string, operationId?: string): string | undefined {
+  if (!connector || !operationId) return undefined;
+  return WRITE_OPERATIONS[connector]?.[operationId];
+}
+
+/** Rows a list query returns when no row limit and no pagination are set. */
+export const DEFAULT_PAGE_SIZE: Record<string, Record<string, number>> = {
+  [SHAREPOINT]: { GetItems: 100 },
+  [EXCEL]: { GetItems: 256 },
+  [DATAVERSE]: { ListRecords: 5000 },
+};
+
+/** SharePoint triggers that fire when an existing item is modified. */
+export const SHAREPOINT_UPDATE_TRIGGERS = new Set(['GetOnUpdatedItems', 'GetOnChangedItems']);
+
+/** SharePoint operation that updates an item. */
+export const SHAREPOINT_UPDATE = 'PatchItem';
+/** Dataverse operations that update a row. */
+export const DATAVERSE_UPDATES = new Set(['UpdateRecord', 'UpdateOnlyRecord']);

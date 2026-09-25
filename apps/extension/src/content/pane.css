@@ -158,6 +158,12 @@ header {
   color: var(--muted);
 }
 
+.categories {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  column-gap: 14px;
+}
+
 .scores b {
   color: var(--text);
   font-weight: 600;

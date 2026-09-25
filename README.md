@@ -19,26 +19,41 @@ See the [project plan](docs/PLAN.md).
 | `scripts/analyse.ts` | Analyse a flow file or a capture file from the command line                      |
 | `docs/PLAN.md`       | Goals, rule catalogue, architecture, milestones                                  |
 
-## Rules in v0.1
+## Rules
 
-| ID    | Category    | Finds                                                           |
-| ----- | ----------- | --------------------------------------------------------------- |
-| SPD01 | Speed       | Apply to each running one item at a time around connector calls |
-| SPD02 | Speed       | Variables written inside a loop (use Select / Filter array)     |
-| SPD03 | Speed       | Records read one at a time inside a loop (N+1 queries)          |
-| SPD04 | Speed       | Loop inside a loop                                              |
-| SPD07 | Speed       | Child flow called inside a loop                                 |
-| SPD08 | Speed       | Polling with Do until and Delay                                 |
-| SPD10 | Speed       | Loop over a query that returns one row                          |
-| RES02 | Resources   | Dataverse trigger without "Select columns"                      |
-| RES03 | Resources   | Recurrence every few minutes or seconds                         |
-| RES04 | Resources   | List query without column list, filter or row limit             |
-| REL01 | Reliability | Parallel loop writing variables (race condition)                |
-| REL02 | Reliability | No error handling (Try / Catch)                                 |
-| REL04 | Reliability | Do until with default limits                                    |
-| REL05 | Reliability | Close to the 500-action or 8-level nesting limits               |
+| ID    | Category    | Finds                                                                        |
+| ----- | ----------- | ---------------------------------------------------------------------------- |
+| SPD01 | Speed       | Apply to each running one item at a time around connector calls              |
+| SPD02 | Speed       | Variables written inside a loop (use Select / Filter array)                  |
+| SPD03 | Speed       | Records read one at a time inside a loop (N+1 queries)                       |
+| SPD04 | Speed       | Loop inside a loop                                                           |
+| SPD05 | Speed       | Loop that only filters items with a Condition (filter before the loop)       |
+| SPD07 | Speed       | Child flow called inside a loop                                              |
+| SPD08 | Speed       | Polling with Do until and Delay                                              |
+| SPD10 | Speed       | Loop over a query that returns one row                                       |
+| RES02 | Resources   | Dataverse trigger without "Select columns"                                   |
+| RES03 | Resources   | Recurrence every few minutes or seconds                                      |
+| RES04 | Resources   | List query without column list, filter or row limit                          |
+| RES08 | Resources   | One create / update / delete per loop item (use bulk or batch requests)      |
+| REL01 | Reliability | Parallel loop writing variables (race condition)                             |
+| REL02 | Reliability | No error handling (Try / Catch)                                              |
+| REL03 | Reliability | Retry policy set to None                                                     |
+| REL04 | Reliability | Do until with default limits                                                 |
+| REL05 | Reliability | Close to the 500-action or 8-level nesting limits                            |
+| REL07 | Reliability | Flow updates the table or list that triggers it (infinite loop)              |
+| REL08 | Reliability | Error path that never ends the run as Failed (failures show as Succeeded)    |
+| REL09 | Reliability | First item of a query read with `[0]` without checking the list is not empty |
+| REL10 | Reliability | List query that silently stops at its default page (100 / 256 / 5,000 rows)  |
+| SEC01 | Security    | Key Vault secret shown in run history (Secure inputs / outputs off)          |
+| SEC02 | Security    | Password, API key or signature typed into an HTTP action                     |
+| SEC03 | Security    | HTTP trigger that anyone with the URL can call                               |
 
 Each finding explains why it matters, how to fix it, and shows the better pattern.
+
+**Grade.** Each category starts at 100 and loses points per finding (high 25, medium 10, low 3,
+times the rule's confidence). The overall score weighs speed 35%, resources 25%, reliability 25%
+and security 15%; A ≥ 90, B ≥ 80, C ≥ 65, D ≥ 50. While a high-severity security finding is
+open, the grade can't be better than C.
 
 ## Using it
 

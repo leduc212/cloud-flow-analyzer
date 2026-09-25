@@ -52,7 +52,7 @@ for (const file of files) {
       const c = score.categories;
       console.log(`\n${tree.displayName ?? source}`);
       console.log(
-        `  ${score.grade} (${score.overall}) · speed ${c.speed.score} · resources ${c.resources.score} · reliability ${c.reliability.score}` +
+        `  ${score.grade} (${score.overall}) · speed ${c.speed.score} · resources ${c.resources.score} · reliability ${c.reliability.score} · security ${c.security.score}${score.capped ? ' (capped at C)' : ''}` +
           ` · ${tree.actionCount} actions · ~${estimate.total.toLocaleString('en-US')} per run${estimate.assumed ? ' (assumed loop sizes)' : ''}`,
       );
       for (const finding of findings) {

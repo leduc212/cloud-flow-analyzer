@@ -39,7 +39,7 @@ describe('scoring', () => {
     expect(deduction(finding({ evidence: { timeSharePct: 100 } }))).toBe(25 * 1.5);
   });
 
-  it('weights categories 40 / 35 / 25 and floors at zero', () => {
+  it('weights categories 35 / 25 / 25 / 15 and floors at zero', () => {
     const score = scoreFindings([
       finding({ category: 'speed' }),
       finding({ category: 'speed' }),
@@ -49,7 +49,23 @@ describe('scoring', () => {
     expect(score.categories.speed).toEqual({ score: 50, grade: 'D', findings: 2 });
     expect(score.categories.resources.score).toBe(100);
     expect(score.categories.reliability.score).toBe(0);
-    expect(score.overall).toBe(Math.round(50 * 0.4 + 100 * 0.35));
+    expect(score.categories.security.score).toBe(100);
+    expect(score.overall).toBe(Math.round(50 * 0.35 + 100 * 0.25 + 0 * 0.25 + 100 * 0.15));
+    expect(score.capped).toBeUndefined();
+  });
+
+  it('caps the grade at C while a high security finding is open', () => {
+    const high = finding({ category: 'security' });
+    const capped = scoreFindings([high]);
+    expect(capped.categories.security.score).toBe(75);
+    expect(capped.overall).toBe(79);
+    expect(capped.grade).toBe('C');
+    expect(capped.capped).toBe(true);
+    // Accepted, or only medium: no cap.
+    expect(scoreFindings([high], () => true).overall).toBe(100);
+    expect(scoreFindings([finding({ category: 'security', severity: 'medium' })]).capped).toBe(
+      undefined,
+    );
   });
 
   it('leaves accepted findings out', () => {

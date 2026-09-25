@@ -1,4 +1,4 @@
-export type Category = 'speed' | 'resources' | 'reliability' | 'maintainability';
+export type Category = 'speed' | 'resources' | 'reliability' | 'security' | 'maintainability';
 export type Severity = 'high' | 'medium' | 'low';
 
 /** Normalised action kind, so rules don't have to know every raw `type` spelling. */
@@ -32,6 +32,10 @@ export interface ActionSettings {
   /** `limit` of an Until loop. */
   limit?: { count?: number; timeout?: string };
   secure?: boolean;
+  /** Secure inputs: the action's inputs are hidden in run history. */
+  secureInputs?: boolean;
+  /** Secure outputs: the action's outputs are hidden in run history. */
+  secureOutputs?: boolean;
 }
 
 export interface ActionNode {
@@ -86,6 +90,10 @@ export interface TriggerNode {
   concurrency?: number;
   recurrence?: { frequency?: string; interval?: number };
   splitOn?: string;
+  /** `kind` of a Request trigger: `Button`, `PowerApp`, `Http`… */
+  requestKind?: string;
+  secureInputs?: boolean;
+  secureOutputs?: boolean;
   raw: Record<string, unknown>;
 }
 

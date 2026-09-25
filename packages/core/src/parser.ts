@@ -95,12 +95,25 @@ function readSettings(raw: JsonObject, inputs: JsonObject): ActionSettings {
       ...(timeout !== undefined ? { timeout } : {}),
     };
   }
-  if (runtime.secureData !== undefined) settings.secure = true;
+  if (runtime.secureData !== undefined) {
+    settings.secure = true;
+    Object.assign(settings, secureParts(runtime.secureData));
+  }
   return settings;
 }
 
+/** Which parts `runtimeConfiguration.secureData.properties` hides: `inputs`, `outputs`. */
+function secureParts(secureData: unknown): { secureInputs?: boolean; secureOutputs?: boolean } {
+  const properties = asObject(secureData).properties;
+  const list = Array.isArray(properties) ? properties.map((p) => String(p).toLowerCase()) : [];
+  return {
+    ...(list.includes('inputs') ? { secureInputs: true } : {}),
+    ...(list.includes('outputs') ? { secureOutputs: true } : {}),
+  };
+}
+
 /** The part of an action that holds its own expressions (not its children's). */
-function ownExpressions(kind: ActionKind, raw: JsonObject): unknown {
+export function ownExpressions(kind: ActionKind, raw: JsonObject): unknown {
   switch (kind) {
     case 'foreach':
       return raw.foreach;
@@ -268,6 +281,10 @@ function parseTrigger(name: string, value: unknown, ctx: ParseContext): TriggerN
   }
   const splitOn = asString(raw.splitOn);
   if (splitOn) node.splitOn = splitOn;
+  const requestKind = asString(raw.kind);
+  if (requestKind) node.requestKind = requestKind;
+  const runtime = asObject(raw.runtimeConfiguration);
+  if (runtime.secureData !== undefined) Object.assign(node, secureParts(runtime.secureData));
   return node;
 }
 

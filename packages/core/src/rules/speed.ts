@@ -343,4 +343,37 @@ export const SPD10: Rule = {
   },
 };
 
-export const SPEED_RULES: Rule[] = [SPD01, SPD02, SPD03, SPD04, SPD07, SPD08, SPD10];
+export const SPD05: Rule = {
+  id: 'SPD05',
+  category: 'speed',
+  severity: 'medium',
+  confidence: 0.7,
+  title: 'Loop used to filter items',
+  why: 'The loop only runs a Condition on each item and does the work for the items that match. Every item still costs a loop iteration and a condition, even the ones that are skipped.',
+  fix: 'Filter first: add the condition to the query (Filter rows / Filter Query) or use Filter array before the loop, then loop over the matching items only (with concurrency on if it is safe).',
+  example: {
+    before:
+      "Apply to each  orders\n  └ Condition  item()?['status'] = 'Open'\n       └ Yes: Update a row",
+    after:
+      "Filter array  orders where item()?['status'] = 'Open'\nApply to each  body('Filter_array')\n  └ Update a row",
+  },
+  docs: [DOCS.relevantData, DOCS.dataOperations],
+  check({ tree }) {
+    const matches: RuleMatch[] = [];
+    for (const loop of tree.all) {
+      if (loop.kind !== 'foreach' || loop.children.length !== 1) continue;
+      const [check] = loop.children as [ActionNode];
+      if (check.kind !== 'condition') continue;
+      // With work in both branches, the condition routes items rather than filtering them.
+      if (check.children.some((c) => c.branch === 'else')) continue;
+      if (!check.usesItem && !check.loopItemRefs.includes(loop.name)) continue;
+      matches.push({
+        target: actionTarget(loop),
+        message: `${q(loop.name)} runs ${q(check.name)} on every item and only does work when it is true: the items could be filtered before the loop.`,
+      });
+    }
+    return matches;
+  },
+};
+
+export const SPEED_RULES: Rule[] = [SPD01, SPD02, SPD03, SPD04, SPD05, SPD07, SPD08, SPD10];

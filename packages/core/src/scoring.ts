@@ -5,10 +5,14 @@ export type ScoredCategory = Exclude<Category, 'maintainability'>;
 
 export const SEVERITY_WEIGHT: Record<Severity, number> = { high: 25, medium: 10, low: 3 };
 export const CATEGORY_WEIGHT: Record<ScoredCategory, number> = {
-  speed: 0.4,
-  resources: 0.35,
+  speed: 0.35,
+  resources: 0.25,
   reliability: 0.25,
+  security: 0.15,
 };
+
+/** Highest overall score a flow can get while it has an open high-severity security finding (C). */
+export const SECURITY_CAP = 79;
 
 export interface CategoryScore {
   score: number;
@@ -20,6 +24,8 @@ export interface Score {
   overall: number;
   grade: Grade;
   categories: Record<ScoredCategory, CategoryScore>;
+  /** Set when an open high-severity security finding capped the grade at C. */
+  capped?: boolean;
 }
 
 export function grade(score: number): Grade {
@@ -39,7 +45,8 @@ export function deduction(finding: Finding): number {
 
 /**
  * Each category starts at 100 and loses points per finding (see `deduction`). The overall
- * score is the weighted average of the categories. Maintainability findings don't count.
+ * score is the weighted average of the categories; an open high-severity security finding caps
+ * it at a C. Maintainability findings don't count.
  */
 export function scoreFindings(
   findings: Finding[],
@@ -54,6 +61,13 @@ export function scoreFindings(
     categories[category] = { score, grade: grade(score), findings: counted.length };
     overall += score * CATEGORY_WEIGHT[category];
   }
-  const rounded = Math.round(overall);
+  let rounded = Math.round(overall);
+  const highSecurity = findings.some(
+    (f) => f.category === 'security' && f.severity === 'high' && !isAccepted(f),
+  );
+  if (highSecurity && rounded > SECURITY_CAP) {
+    rounded = SECURITY_CAP;
+    return { overall: rounded, grade: grade(rounded), categories, capped: true };
+  }
   return { overall: rounded, grade: grade(rounded), categories };
 }

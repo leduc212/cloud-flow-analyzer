@@ -121,7 +121,7 @@ Extras:
 
 ## 4. Rule catalogue
 
-Each rule has: `id`, `category` (speed / resources / reliability / maintainability), `severity` (high / medium / low), `detect(tree, runStats?)`, `why`, `fix`, `example` (before/after), `docs` link.
+Each rule has: `id`, `category` (speed / resources / reliability / security / maintainability), `severity` (high / medium / low), `detect(tree, runStats?)`, `why`, `fix`, `example` (before/after), `docs` link.
 📊 = the rule uses run data when available (and falls back to definition-only).
 **In** = the milestone that ships the rule (definition-only version first where one exists).
 
@@ -134,7 +134,7 @@ Each rule has: `id`, `category` (speed / resources / reliability / maintainabili
 | SPD02 | v0.1 | `SetVariable` / `AppendToArrayVariable` / `AppendToStringVariable` / `IncrementVariable` / `DecrementVariable` inside a sequential `Foreach` (in a concurrent loop this is REL01 instead) | Use **Select** / **Filter array** / **Compose** / `union()` / `join()`. Faster, and makes concurrency safe |
 | SPD03 📊 | v0.1 | Per-item reads inside a `Foreach`: single-record reads (Dataverse *Get a row*, SharePoint *Get item*, Office 365 Users *Get user profile*…), or list queries whose parameters use the current item (N+1 queries). HTTP GET using the current item: lower confidence | Do one bulk query before the loop (`$filter`, `$expand`, FetchXML), then Filter array |
 | SPD04 | v0.1 | Nested `Foreach` (inner loops always run one at a time) | Flatten with Select / `xpath()`, query the child rows with `$expand`, or move the inner loop into a child flow |
-| SPD05 📊 | v0.3 | Loop body is a single `If` with an empty `else`, and run data shows most iterations take the empty branch | Move the condition into the source query `$filter`, or use Filter array before the loop |
+| SPD05 📊 | v0.2 (definition), v0.3 (📊) | Loop body is a single `If` on the loop item with an empty `else`. Later: run data shows most iterations take the empty branch | Move the condition into the source query `$filter`, or use Filter array before the loop |
 | SPD06 | later | Independent actions chained one after another (no data dependency). Many false positives, because order often matters for side effects (create a record, then send an email). Low severity, low confidence, off by default | Run them as parallel branches |
 | SPD07 📊 | v0.1 | A child flow (`Workflow` action) inside a loop | Send the whole batch to the child flow in one call |
 | SPD08 | v0.1 | `Until` containing a `Wait`/Delay (polling) | Use a trigger or webhook, or a longer interval |
@@ -151,16 +151,28 @@ Each rule has: `id`, `category` (speed / resources / reliability / maintainabili
 | RES05 | v0.3 | `paginationPolicy.minimumItemCount` very high (over 5,000) | Lower it, or filter at the source |
 | RES06 📊 | v0.2 | High estimated actions per run (Σ loop iterations × actions inside the loop) | Show the projected daily count against a **user-set** daily request limit (informational) |
 | RES07 | v0.3 | Dataverse *Update a row* that sets more than 10 columns, or maps every column from the trigger body | Send only changed columns (avoids triggering other automations) |
+| RES08 | v0.2 | Create / update / delete one record per loop item (Dataverse, SharePoint, SQL, Excel), grouped per loop; lower confidence when the loop is concurrent; skips one-row loops | Dataverse bulk messages (`CreateMultiple` / `UpdateMultiple`) or `$batch`, SharePoint `$batch`, SQL stored procedure, Excel Office Script; at least concurrency (Microsoft anti-pattern) |
 
 ### Reliability
 | ID | In | Detects | Recommendation |
 |---|---|---|---|
 | REL01 | v0.1 | Loop concurrency on **and** variables written inside the loop | Race condition. Fix before speeding up |
 | REL02 | v0.1 | Flow with 5 or more actions and no error handling (no action runs after Failed / TimedOut) | Try/Catch/Finally scope pattern |
-| REL03 📊 | v0.2 | Default or aggressive retry policy on slow/flaky actions; many 429s | Tune `retryPolicy`; reduce the number of calls |
+| REL03 📊 | v0.2 | Retry policy `none` (definition). Later: default or aggressive retry policy on slow/flaky actions; many 429s | Default or exponential retry; tune `retryPolicy`; reduce the number of calls |
 | REL04 | v0.1 | `Until` with no limits or with the default ones (count 60, timeout PT1H) | Set explicit limits and check the exit condition after the loop |
 | REL05 | v0.1 | Close to platform limits: 400+ actions (limit 500) or nesting depth 7+ (limit 8) | Split into child flows |
 | REL06 📊 | v0.3 | Trigger concurrency limited to 1, and run data shows runs waiting for each other | Review whether serial runs are really needed |
+| REL07 | v0.2 | Dataverse update of the triggering table (logical name matched to the entity set name), or SharePoint *Update item* on the triggering list, when the trigger has no trigger condition and its filtering columns include a column the update sets | Trigger condition, or filtering columns the update doesn't change (Microsoft anti-pattern: infinite loop) |
+| REL08 | v0.2 | Error path (runs after Failed / TimedOut, not after Succeeded) where nothing in it or after it is a Terminate *Failed* / *Cancelled* or a Response. Skips per-item handlers inside loops and request-triggered flows that answer with a Response. One finding per flow | End the Catch with Terminate (Failed) |
+| REL09 | v0.2 | `body('X')…[0]` / `outputs('X')…?[0]` on a list result (list query, Filter array, Select, `…['value']`) with no `empty()` / `length()` in the same expression and no enclosing Condition on X. Grouped per source list | `first()` with an empty check, or a `length()` Condition |
+| REL10 | v0.2 | SharePoint *Get items* (100) or Excel *List rows* (256) with no Top Count and no pagination; Dataverse *List rows* (5,000) with neither, when a loop goes through it | Top Count, or pagination with a threshold |
+
+### Security
+| ID | In | Detects | Recommendation |
+|---|---|---|---|
+| SEC01 | v0.2 | Key Vault *Get secret* without Secure outputs; steps that reference it without Secure inputs | Turn on Secure inputs / outputs |
+| SEC02 | v0.2 | HTTP action with a literal (non-expression) password / secret in its authentication, a credential header (`Authorization`, `x-api-key`, `api-key`, `Ocp-Apim-Subscription-Key`, `x-functions-key`…), or a key in the URI (`code=`, `sig=`, `api_key=`) | Key Vault or an environment variable of type Secret, Secure inputs, rotate the secret |
+| SEC03 | v0.2 | *When an HTTP request is received* with "Who can trigger the flow" set to Anyone (`triggerAuthenticationType` `All`), or missing (legacy flows) | Any user / specific users in my tenant |
 
 ### Maintainability (off by default)
 | ID | In | Detects |
@@ -191,6 +203,15 @@ Sources: Microsoft's cloud flow coding guidelines (all 27 pages), limits page, S
 | MNT02 | Maintainability | Default action names (`Compose_3`) | Descriptive names | 22 flows, 111 actions | Off by default |
 | MNT04 | Maintainability | Deprecated actions/connectors (legacy Common Data Service connector, `SendEmail` V1, `UserProfile` V1…) | Current versions | – | v0.3 |
 
+**Built (v0.2, 2026-09-25):** SEC01–SEC03, RES08, SPD05 (definition), REL03 (definition), REL07–REL10, with tests; the "Security" category and the C cap are in the score, the pane and the report. Results on the 28-flow capture after building:
+- SEC01: 2 flows (4 *Get secret* without Secure outputs; 4 steps using a secret without Secure inputs). SEC02: 1 flow (subscription key header). SEC03: 0 (no HTTP triggers).
+- RES08: 6 flows, 10 loops. SPD05: 2 flows. REL03: 1 flow, 2 actions. REL10: 4 Dataverse queries looped over (low confidence). REL07: 0 (both self-updating flows are guarded by trigger conditions).
+- REL08: 6 flows (down from 16 once per-item handlers and child flows answering with a Response were skipped).
+- REL09: 0. Almost every `[0]` in the capture sits under a Condition on `length()` of the same list, or next to `empty()` in the expression; the research count didn't look for guards.
+- The "after" fixture now writes with one `UpdateMultiple` request and pages its query, so it still scores 100.
+
+**Dropped: REL11.** The designer refuses to save a reference to a missing action, and the capture shows the runtime matching names without regard to case (a Condition referencing `…_for_domain` for an action named `…_for_Domain` succeeded in run history). Neither case produces a silent null. Not built: the REL05 extension, RES09, MNT01, MNT02, MNT04 (unchanged priorities).
+
 Not detectable from a definition (run data or tenant settings instead): child flows over 120 seconds (needs the async 202 pattern; v0.2 run data), throttling that turns a flow off after 14 days (run data), flow ownership by a service principal, solution-aware ALM, monitoring and alerting.
 
 **Scoring impact:** security findings need their own category. Proposal: speed 35%, resources 25%, reliability 25%, security 15%, with any high security finding capping the grade at C.
@@ -200,10 +221,10 @@ Not detectable from a definition (run data or tenant settings instead): child fl
 ---
 
 ## 5. Scoring
-- Each category (speed, resources, reliability) starts at **100**. Each finding subtracts **high 25 / medium 10 / low 3**, multiplied by its confidence (0–1). The score can't go below 0.
+- Each category (speed, resources, reliability, security) starts at **100**. Each finding subtracts **high 25 / medium 10 / low 3**, multiplied by its confidence (0–1). The score can't go below 0.
 - 📊 findings scale by measured impact: the deduction is multiplied by `0.5 + timeShare` (capped at 1.5), so a loop taking 80% of the run weighs more than one taking 5%.
 - Grades: **A ≥ 90, B ≥ 80, C ≥ 65, D ≥ 50, F below 50.**
-- Overall = weighted average: speed 40%, resources 35%, reliability 25%. Maintainability is excluded by default.
+- Overall = weighted average: speed 35%, resources 25%, reliability 25%, security 15% (was 40 / 35 / 25 before the security category, 2026-09-25). While a high-severity security finding is open (not dismissed), the overall score is capped at 79 (grade C). Maintainability is excluded by default.
 - **Estimated actions per run:** walk the definition; `If` and `Switch` count their largest branch; loops multiply their inner count by the median iteration count measured from runs, or by a default (Foreach 50, Until 10) marked as assumed.
 - Findings marked "accepted" (stored locally by flow ID + rule ID + action path) don't count toward the score.
 
@@ -363,12 +384,13 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 
 ### v0.2: Run analysis in the pane
 - "Analyse recent runs" in the pane: sampling, rate-limited queue, cache; slowest actions, loop iterations, throttling per action.
-- 📊 versions of SPD01, SPD03, SPD07 (rank by measured time share); new rules RES01, RES06, REL03; estimated vs. measured actions per run.
+- ✅ Definition rules from the 2026-09-25 research: SEC01–SEC03, RES08, SPD05, REL03 (retry none), REL07–REL10, and the Security score category (see §4, §5).
+- 📊 versions of SPD01, SPD03, SPD07 (rank by measured time share); new rules RES01, RES06, REL03 (📊); estimated vs. measured actions per run.
 - *Done when:* the slowest action and loop iteration numbers match what the portal's run history shows.
 
 ### v0.3: Environment and remaining rules
 - "Analyse all": an extension page listing every flow in an environment with its grade and top findings (pre-screened from each flow's `definitionSummary`), linking to the flow so the pane can take over. This replaces the separate full-page Flows app of the first plan.
-- Remaining rules (SPD05, SPD09, RES05, RES07, REL06, MNT02).
+- Remaining rules (SPD05 📊, SPD09, RES05, RES07, REL06, MNT02).
 - Demo site on GitHub Pages: sample flows plus a "paste a flow definition JSON" mode. Make the repo public at this point.
 
 ### v1.0: Polish and publish

@@ -1,6 +1,6 @@
 import type { Finding } from '@cfa/core';
 // Only the scoring module: the pane doesn't need the parser or the rules.
-import { scoreFindings, type Score } from '@cfa/core/scoring';
+import { scoreFindings, type Score, type ScoredCategory } from '@cfa/core/scoring';
 import type { PaneFinding, PaneResult } from '../shared/pane-result.ts';
 
 /** Stable key of a finding within a flow, used to remember dismissals. */
@@ -17,6 +17,15 @@ export function scoreWithout(result: PaneResult, dismissed: ReadonlySet<string>)
 
 const SEVERITY = { high: 'High', medium: 'Medium', low: 'Low' } as const;
 
+export const CAPPED_NOTE = 'capped at C while a high security finding is open';
+
+export const CATEGORY_LABELS: [ScoredCategory, string][] = [
+  ['speed', 'Speed'],
+  ['resources', 'Resources'],
+  ['reliability', 'Reliability'],
+  ['security', 'Security'],
+];
+
 /** The analysis as Markdown, for pasting into a ticket, a chat or a review. */
 export function markdownReport(result: PaneResult, dismissed: ReadonlySet<string>): string {
   const score = scoreWithout(result, dismissed);
@@ -24,7 +33,10 @@ export function markdownReport(result: PaneResult, dismissed: ReadonlySet<string
   const lines = [
     `# Flow analysis: ${result.displayName}`,
     '',
-    `**Grade ${score.grade}** (${score.overall}/100) · Speed ${score.categories.speed.score} · Resources ${score.categories.resources.score} · Reliability ${score.categories.reliability.score}`,
+    [
+      `**Grade ${score.grade}** (${score.overall}/100${score.capped ? `, ${CAPPED_NOTE}` : ''})`,
+      ...CATEGORY_LABELS.map(([category, name]) => `${name} ${score.categories[category].score}`),
+    ].join(' · '),
     `${result.actionCount} actions · about ${result.estimate.total.toLocaleString('en-US')} actions per run${result.estimate.assumed ? ' (estimated)' : ''} · analysed ${result.analysedAt.slice(0, 10)}`,
     '',
   ];

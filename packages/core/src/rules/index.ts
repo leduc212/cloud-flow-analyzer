@@ -1,9 +1,15 @@
 import { RELIABILITY_RULES } from './reliability.ts';
 import { RESOURCE_RULES } from './resources.ts';
 import type { Rule } from './rule.ts';
+import { SECURITY_RULES } from './security.ts';
 import { SPEED_RULES } from './speed.ts';
 
-export const RULES: Rule[] = [...SPEED_RULES, ...RESOURCE_RULES, ...RELIABILITY_RULES];
+export const RULES: Rule[] = [
+  ...SPEED_RULES,
+  ...RESOURCE_RULES,
+  ...RELIABILITY_RULES,
+  ...SECURITY_RULES,
+];
 
 export const RULES_BY_ID: ReadonlyMap<string, Rule> = new Map(RULES.map((rule) => [rule.id, rule]));
 

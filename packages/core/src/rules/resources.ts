@@ -1,5 +1,15 @@
-import { DATAVERSE_UPDATE_MESSAGES, listOperation } from '../connectors.ts';
+import {
+  DATAVERSE,
+  DATAVERSE_UPDATE_MESSAGES,
+  EXCEL,
+  SHAREPOINT,
+  SQL,
+  listOperation,
+  writeOperation,
+} from '../connectors.ts';
 import { asNumber, asString, hasValue } from '../definition.ts';
+import { enclosingLoops, isConcurrentLoop, singleRowSource } from '../parser.ts';
+import type { ActionNode } from '../types.ts';
 import { DOCS, actionTarget, plural, q, triggerTarget, type Rule, type RuleMatch } from './rule.ts';
 
 export const RES02: Rule = {
@@ -111,4 +121,56 @@ export const RES04: Rule = {
   },
 };
 
-export const RESOURCE_RULES: Rule[] = [RES02, RES03, RES04];
+const BULK_FIX: Record<string, string> = {
+  [DATAVERSE]:
+    'Build the rows with Select before the loop and send them in one request with the Dataverse bulk messages (CreateMultiple, UpdateMultiple, UpsertMultiple) through HTTP with Microsoft Entra ID, or group them in a $batch request. If you keep the loop, turn on concurrency.',
+  [SHAREPOINT]:
+    'Group the changes into $batch requests with "Send an HTTP request to SharePoint" (up to 1,000 changes per request), built with Select before the loop. If you keep the loop, turn on concurrency.',
+  [SQL]:
+    'Send all the rows in one call: pass them as JSON to a stored procedure (Execute stored procedure) that inserts or updates them together.',
+  [EXCEL]:
+    'Write all the rows in one call with an Office Script (Run script) that takes the array built with Select.',
+};
+
+export const RES08: Rule = {
+  id: 'RES08',
+  category: 'resources',
+  severity: 'medium',
+  confidence: 0.6,
+  title: 'One write per loop item',
+  why: 'Creating, updating or deleting records one at a time in a loop makes one request per record. With hundreds or thousands of items this is slow, counts heavily toward request limits, and invites throttling. Microsoft lists it as an anti-pattern.',
+  fix: 'Prepare all the records with Select before the loop and write them in bulk or in batches. For services with no batch API, at least turn on concurrency for the loop.',
+  example: {
+    before: 'Apply to each  (1,000 items)\n  └ Update a row   → 1,000 requests',
+    after:
+      'Select  map items to rows\nHTTP with Microsoft Entra ID  POST …/contacts/Microsoft.Dynamics.CRM.UpdateMultiple\n  Body: { "Targets": body(\'Select\') }   → 1 request',
+  },
+  docs: [DOCS.antiPatterns, DOCS.bulkOperations],
+  check({ tree }) {
+    const byLoop = new Map<ActionNode, ActionNode[]>();
+    for (const node of tree.all) {
+      if (!writeOperation(node.connector, node.operationId)) continue;
+      const loop = enclosingLoops(tree, node)[0];
+      if (!loop || singleRowSource(tree, loop)) continue;
+      byLoop.set(loop, [...(byLoop.get(loop) ?? []), node]);
+    }
+    return [...byLoop].map(([loop, writes]): RuleMatch => {
+      const shown = writes
+        .slice(0, 3)
+        .map((w) => `${q(w.name)} (${writeOperation(w.connector, w.operationId)})`);
+      const more = writes.length > 3 ? ` and ${writes.length - 3} more` : '';
+      const connectors = new Set(writes.map((w) => w.connector));
+      const [connector] = connectors;
+      const fix = connectors.size === 1 && connector ? BULK_FIX[connector] : undefined;
+      const outermost = enclosingLoops(tree, loop).at(-1) ?? loop;
+      return {
+        target: actionTarget(loop),
+        message: `${q(loop.name)} writes records one at a time: ${plural(writes.length, 'request')} per item (${shown.join(', ')}${more}).`,
+        confidence: isConcurrentLoop(outermost) ? 0.5 : 0.6,
+        ...(fix ? { fix } : {}),
+      };
+    });
+  },
+};
+
+export const RESOURCE_RULES: Rule[] = [RES02, RES03, RES04, RES08];

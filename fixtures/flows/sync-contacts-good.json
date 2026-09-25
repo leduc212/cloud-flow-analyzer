@@ -8,8 +8,14 @@
       "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
       "contentVersion": "1.0.0.0",
       "parameters": {
-        "$connections": { "defaultValue": {}, "type": "Object" },
-        "$authentication": { "defaultValue": {}, "type": "SecureObject" }
+        "$connections": {
+          "defaultValue": {},
+          "type": "Object"
+        },
+        "$authentication": {
+          "defaultValue": {},
+          "type": "SecureObject"
+        }
       },
       "triggers": {
         "When_a_row_is_added,_modified_or_deleted": {
@@ -52,43 +58,62 @@
                   "$expand": "primarycontactid($select=emailaddress1)"
                 },
                 "authentication": "@parameters('$authentication')"
+              },
+              "runtimeConfiguration": {
+                "paginationPolicy": {
+                  "minimumItemCount": 20000
+                }
               }
             },
             "Select_emails": {
-              "runAfter": { "List_accounts": ["Succeeded"] },
+              "runAfter": {
+                "List_accounts": ["Succeeded"]
+              },
               "type": "Select",
               "inputs": {
                 "from": "@outputs('List_accounts')?['body/value']",
                 "select": "@item()?['primarycontactid/emailaddress1']"
               }
             },
-            "Apply_to_each": {
-              "foreach": "@outputs('List_accounts')?['body/value']",
-              "actions": {
-                "Update_account": {
-                  "runAfter": {},
-                  "type": "OpenApiConnection",
-                  "inputs": {
-                    "host": {
-                      "connectionName": "shared_commondataserviceforapps",
-                      "operationId": "UpdateRecord",
-                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps"
-                    },
-                    "parameters": {
-                      "entityName": "accounts",
-                      "recordId": "@items('Apply_to_each')?['accountid']",
-                      "item/description": "Synced"
-                    },
-                    "authentication": "@parameters('$authentication')"
-                  }
-                }
+            "Select_updates": {
+              "runAfter": {
+                "Select_emails": ["Succeeded"]
               },
-              "runAfter": { "Select_emails": ["Succeeded"] },
-              "type": "Foreach",
-              "runtimeConfiguration": { "concurrency": { "repetitions": 20 } }
+              "type": "Select",
+              "inputs": {
+                "from": "@outputs('List_accounts')?['body/value']",
+                "select": {
+                  "@odata.type": "Microsoft.Dynamics.CRM.account",
+                  "accountid": "@item()?['accountid']",
+                  "description": "Synced"
+                }
+              }
+            },
+            "Update_accounts_in_bulk": {
+              "runAfter": {
+                "Select_updates": ["Succeeded"]
+              },
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_webcontents",
+                  "operationId": "InvokeHttp",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_webcontents"
+                },
+                "parameters": {
+                  "request/method": "POST",
+                  "request/url": "/api/data/v9.2/accounts/Microsoft.Dynamics.CRM.UpdateMultiple",
+                  "request/body": {
+                    "Targets": "@body('Select_updates')"
+                  }
+                },
+                "authentication": "@parameters('$authentication')"
+              }
             },
             "Send_summary": {
-              "runAfter": { "Apply_to_each": ["Succeeded"] },
+              "runAfter": {
+                "Update_accounts_in_bulk": ["Succeeded"]
+              },
               "type": "OpenApiConnection",
               "inputs": {
                 "host": {
@@ -107,7 +132,9 @@
           }
         },
         "Catch": {
-          "runAfter": { "Try": ["Failed", "TimedOut"] },
+          "runAfter": {
+            "Try": ["Failed", "TimedOut"]
+          },
           "type": "Scope",
           "actions": {
             "Notify_owner": {
@@ -128,9 +155,13 @@
               }
             },
             "Terminate": {
-              "runAfter": { "Notify_owner": ["Succeeded"] },
+              "runAfter": {
+                "Notify_owner": ["Succeeded"]
+              },
               "type": "Terminate",
-              "inputs": { "runStatus": "Failed" }
+              "inputs": {
+                "runStatus": "Failed"
+              }
             }
           }
         }
@@ -148,6 +179,12 @@
         "connectionName": "shared-office365-00000000-0000-4000-8000-000000000202",
         "source": "Embedded",
         "id": "/providers/Microsoft.PowerApps/apis/shared_office365",
+        "tier": "NotSpecified"
+      },
+      "shared_webcontents": {
+        "connectionName": "shared-webcontents-00000000-0000-4000-8000-000000000203",
+        "source": "Embedded",
+        "id": "/providers/Microsoft.PowerApps/apis/shared_webcontents",
         "tier": "NotSpecified"
       }
     }

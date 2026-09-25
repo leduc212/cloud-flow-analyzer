@@ -26,13 +26,41 @@ describe('report', () => {
   it('leaves dismissed findings out of the score and the report', () => {
     const rel02 = result.findings.find((f) => f.ruleId === 'REL02')!;
     const dismissed = new Set([findingKey(rel02)]);
-    expect(scoreWithout(result, dismissed).categories.reliability.score).toBe(100);
+    // REL02 is medium (10) × 0.7 confidence.
+    expect(scoreWithout(result, dismissed).categories.reliability.score).toBe(
+      result.categories.reliability + 7,
+    );
     const report = markdownReport(result, dismissed);
     expect(report).toContain('# Flow analysis: Sync account contacts (before)');
     expect(report).toContain('## High · SPD03 Data read one item at a time inside a loop');
     expect(report).toContain('**Where:** Get primary contact');
     expect(report).not.toContain('REL02');
     expect(report).toContain('_1 dismissed finding not shown._');
+  });
+
+  it('shows the security score and the grade cap', () => {
+    expect(markdownReport(result, new Set())).toContain('· Security 100');
+    const secret = buildPaneResult(
+      { environment: 'env', flowId: 'flow-2' },
+      analyseFlow({
+        triggers: {},
+        actions: {
+          Get_secret: {
+            type: 'OpenApiConnection',
+            inputs: {
+              host: {
+                apiId: '/providers/Microsoft.PowerApps/apis/shared_keyvault',
+                operationId: 'GetSecret',
+              },
+            },
+          },
+        },
+      }),
+      new Date(0),
+    );
+    expect(markdownReport(secret, new Set())).toContain(
+      '**Grade C** (79/100, capped at C while a high security finding is open)',
+    );
   });
 
   it('keys findings by rule and position', () => {

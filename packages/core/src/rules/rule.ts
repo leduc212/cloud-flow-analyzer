@@ -49,6 +49,16 @@ export const DOCS = {
     'https://learn.microsoft.com/en-us/power-automate/dataverse/create-update-delete-trigger',
   listRows: 'https://learn.microsoft.com/en-us/power-automate/dataverse/list-rows',
   loops: 'https://learn.microsoft.com/en-us/azure/logic-apps/logic-apps-control-flow-loops',
+  secureData: `${GUIDANCE}/use-secure-inputs-outputs-triggers`,
+  genericConfig: `${GUIDANCE}/keep-flow-configuration-generic`,
+  keyVaultVariables:
+    'https://learn.microsoft.com/en-us/power-apps/maker/data-platform/environmentvariables-azure-key-vault-secrets',
+  bulkOperations:
+    'https://learn.microsoft.com/en-us/power-apps/developer/data-platform/bulk-operations',
+  sharePointGetItems:
+    'https://learn.microsoft.com/en-us/sharepoint/dev/business-apps/power-automate/guidance/working-with-get-items-and-get-files',
+  expressions: 'https://learn.microsoft.com/en-us/power-automate/expression-cookbook',
+  httpTrigger: 'https://learn.microsoft.com/en-us/power-automate/oauth-authentication',
 } as const;
 
 export function actionTarget(node: ActionNode): FindingTarget {

@@ -40,7 +40,17 @@ describe('rule catalogue', () => {
 
 describe('fixtures', () => {
   it('finds every problem in the "before" flow', () => {
-    expect(ruleIds(bad)).toEqual(['REL02', 'RES02', 'RES04', 'SPD01', 'SPD02', 'SPD03']);
+    expect(ruleIds(bad)).toEqual([
+      'REL02',
+      'REL07',
+      'REL10',
+      'RES02',
+      'RES04',
+      'RES08',
+      'SPD01',
+      'SPD02',
+      'SPD03',
+    ]);
   });
 
   it('finds nothing in the fixed "after" flow', () => {
@@ -470,6 +480,389 @@ describe('REL05 platform limits', () => {
     expect(finding?.target.name).toBe('Deepest');
     expect(finding?.message).toContain('nested 7 levels deep');
     expect(findings(nested(6), 'REL05')).toEqual([]);
+  });
+});
+
+describe('REL03 retries turned off', () => {
+  it('flags retry policy none only', () => {
+    const call = (type: string) => ({
+      ...http('POST', 'https://example.com'),
+      inputs: { method: 'POST', uri: 'https://example.com', retryPolicy: { type } },
+    });
+    expect(findings(flow({ H: call('none') }), 'REL03')[0]?.target.name).toBe('H');
+    expect(findings(flow({ H: call('None') }), 'REL03')).toHaveLength(1);
+    expect(findings(flow({ H: call('exponential') }), 'REL03')).toEqual([]);
+    expect(findings(flow({ H: http('GET', 'https://example.com') }), 'REL03')).toEqual([]);
+  });
+});
+
+describe('REL07 flow triggers itself', () => {
+  const dataverseTrigger = (parameters: Record<string, unknown>, conditions: string[] = []) => ({
+    When_a_row_is_modified: {
+      type: 'OpenApiConnectionWebhook',
+      inputs: {
+        host: {
+          apiId: '/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps',
+          operationId: 'SubscribeWebhookTrigger',
+        },
+        parameters: {
+          'subscriptionRequest/message': 3,
+          'subscriptionRequest/entityname': 'account',
+          ...parameters,
+        },
+      },
+      ...(conditions.length
+        ? { conditions: conditions.map((expression) => ({ expression })) }
+        : {}),
+    },
+  });
+  const update = (entityName: string, column = 'description') =>
+    dataverse('UpdateRecord', {
+      entityName,
+      recordId: "@triggerOutputs()?['body/accountid']",
+      [`item/${column}`]: 'x',
+    });
+
+  it('flags an update of the triggering table (entity set name) with no guard', () => {
+    const [finding] = findings(flow({ U: update('accounts') }, dataverseTrigger({})), 'REL07');
+    expect(finding?.target.name).toBe('U');
+    expect(finding?.confidence).toBe(0.8);
+    expect(findings(flow({ U: update('contacts') }, dataverseTrigger({})), 'REL07')).toEqual([]);
+  });
+
+  it('accepts trigger conditions and filtering columns the update does not change', () => {
+    const guarded = dataverseTrigger({}, ["@not(equals(triggerOutputs()?['body/x'], 1))"]);
+    expect(findings(flow({ U: update('accounts') }, guarded), 'REL07')).toEqual([]);
+    const columns = dataverseTrigger({ 'subscriptionRequest/filteringattributes': 'name' });
+    expect(findings(flow({ U: update('accounts') }, columns), 'REL07')).toEqual([]);
+    expect(findings(flow({ U: update('accounts', 'name') }, columns), 'REL07')).toHaveLength(1);
+  });
+
+  it('flags a SharePoint item update on the triggering list', () => {
+    const trigger = {
+      When_an_item_is_modified: {
+        type: 'OpenApiConnectionWebhook',
+        inputs: {
+          host: {
+            apiId: '/providers/Microsoft.PowerApps/apis/shared_sharepointonline',
+            operationId: 'GetOnUpdatedItems',
+          },
+          parameters: { dataset: 'https://contoso.sharepoint.com/sites/a', table: 'list-1' },
+        },
+      },
+    };
+    const patch = (table: string) =>
+      sharepoint('PatchItem', { dataset: 'https://contoso.sharepoint.com/sites/a', table, id: 1 });
+    expect(findings(flow({ P: patch('list-1') }, trigger), 'REL07')).toHaveLength(1);
+    expect(findings(flow({ P: patch('list-2') }, trigger), 'REL07')).toEqual([]);
+  });
+});
+
+describe('REL08 failed runs show as Succeeded', () => {
+  const terminate = (runStatus: string, runAfter: Record<string, string[]> = {}) => ({
+    runAfter,
+    type: 'Terminate',
+    inputs: { runStatus },
+  });
+
+  it('flags a catch path that never terminates as Failed', () => {
+    const [finding, ...rest] = findings(
+      flow({
+        Try: scope(chain(3)),
+        Catch: scope({ Notify: outlook() }, { Try: ['Failed'] }),
+        Log: compose('x', { Try: ['TimedOut'] }),
+      }),
+      'REL08',
+    );
+    expect(rest).toEqual([]);
+    expect(finding?.target.name).toBe('Catch');
+    expect(finding?.message).toContain('and 1 other error path');
+  });
+
+  it('accepts Terminate Failed or Cancelled inside or after the handler', () => {
+    const inside = flow({
+      Try: scope(chain(3)),
+      Catch: scope(
+        { Notify: outlook(), End: terminate('Failed', { Notify: ['Succeeded'] }) },
+        { Try: ['Failed'] },
+      ),
+    });
+    expect(findings(inside, 'REL08')).toEqual([]);
+    const after = flow({
+      Try: scope(chain(3)),
+      Catch: scope({ Notify: outlook() }, { Try: ['Failed'] }),
+      End: terminate('Cancelled', { Catch: ['Succeeded'] }),
+    });
+    expect(findings(after, 'REL08')).toEqual([]);
+    const succeeded = flow({
+      Try: scope(chain(3)),
+      Catch: scope({ End: terminate('Succeeded') }, { Try: ['Failed'] }),
+    });
+    expect(findings(succeeded, 'REL08')).toHaveLength(1);
+  });
+
+  it('ignores Finally steps, per-item handlers and flows that answer with a Response', () => {
+    expect(
+      findings(
+        flow({ Try: scope(chain(3)), Finally: compose(1, { Try: ['Succeeded', 'Failed'] }) }),
+        'REL08',
+      ),
+    ).toEqual([]);
+    expect(
+      findings(
+        flow({ L: foreach(LIST, { A: compose(1), Log: compose(2, { A: ['Failed'] }) }) }),
+        'REL08',
+      ),
+    ).toEqual([]);
+    const child = flow({
+      Try: scope(chain(3)),
+      Catch: scope(
+        { Respond: { runAfter: {}, type: 'Response', inputs: { statusCode: 500 } } },
+        { Try: ['Failed'] },
+      ),
+    });
+    expect(findings(child, 'REL08')).toEqual([]);
+  });
+});
+
+describe('REL09 first item read without checking the list', () => {
+  const list = dataverse('ListRecords', { entityName: 'accounts' });
+
+  it('groups [0] reads per source list', () => {
+    const [finding, ...rest] = findings(
+      flow({
+        List_rows: list,
+        A: compose("@outputs('List_rows')?['body/value'][0]?['name']", {
+          List_rows: ['Succeeded'],
+        }),
+        B: compose("@{body('List_rows')?['value']?[0]?['id']}", { A: ['Succeeded'] }),
+      }),
+      'REL09',
+    );
+    expect(rest).toEqual([]);
+    expect(finding?.target.name).toBe('A');
+    expect(finding?.message).toContain('2 steps');
+    expect(finding?.confidence).toBe(0.6);
+  });
+
+  it('uses lower confidence when every read uses ?[0]', () => {
+    const [finding] = findings(
+      flow({ List_rows: list, A: compose("@outputs('List_rows')?['body/value']?[0]") }),
+      'REL09',
+    );
+    expect(finding?.confidence).toBe(0.5);
+  });
+
+  it('accepts reads guarded by empty(), length() or an enclosing condition', () => {
+    const inline = flow({
+      List_rows: list,
+      A: compose(
+        "@if(empty(outputs('List_rows')?['body/value']), null, outputs('List_rows')?['body/value'][0])",
+      ),
+    });
+    expect(findings(inline, 'REL09')).toEqual([]);
+    const guarded = flow({
+      List_rows: list,
+      Check: {
+        type: 'If',
+        runAfter: {},
+        expression: { greater: ["@length(outputs('List_rows')?['body/value'])", 0] },
+        actions: { A: compose("@outputs('List_rows')?['body/value'][0]") },
+        else: { actions: {} },
+      },
+    });
+    expect(findings(guarded, 'REL09')).toEqual([]);
+  });
+
+  it('ignores [0] on values that are not lists of records', () => {
+    expect(
+      findings(flow({ A: compose("@split(triggerBody()?['from'], '<')[0]") }), 'REL09'),
+    ).toEqual([]);
+    expect(
+      findings(flow({ C: compose('x'), A: compose("@outputs('C')?['parts'][0]") }), 'REL09'),
+    ).toEqual([]);
+  });
+});
+
+describe('REL10 list query silently stops at its default page', () => {
+  it('flags SharePoint Get items without Top Count or pagination', () => {
+    const [finding] = findings(flow({ Q: sharepoint('GetItems', {}) }), 'REL10');
+    expect(finding?.message).toContain('at most 100 items');
+    expect(findings(flow({ Q: sharepoint('GetItems', { $top: 500 }) }), 'REL10')).toEqual([]);
+    const paged = {
+      ...sharepoint('GetItems', {}),
+      runtimeConfiguration: { paginationPolicy: { minimumItemCount: 5000 } },
+    };
+    expect(findings(flow({ Q: paged }), 'REL10')).toEqual([]);
+  });
+
+  it('flags Dataverse List rows only when a loop goes through it', () => {
+    const query = dataverse('ListRecords', { entityName: 'accounts', $select: 'name' });
+    expect(findings(flow({ List_rows: query }), 'REL10')).toEqual([]);
+    const [finding] = findings(
+      flow({ List_rows: query, L: foreach(LIST, { C: compose(1) }) }),
+      'REL10',
+    );
+    expect(finding?.message).toContain('at most 5,000 rows');
+    expect(finding?.confidence).toBe(0.4);
+  });
+});
+
+describe('RES08 one write per loop item', () => {
+  it('groups the writes of a loop', () => {
+    const [finding, ...rest] = findings(
+      flow({
+        L: foreach(LIST, {
+          Create: dataverse('CreateRecord'),
+          Update: dataverse('UpdateRecord', {}, { Create: ['Succeeded'] }),
+        }),
+      }),
+      'RES08',
+    );
+    expect(rest).toEqual([]);
+    expect(finding?.target.name).toBe('L');
+    expect(finding?.message).toContain('2 requests per item');
+    expect(finding?.fix).toContain('UpdateMultiple');
+  });
+
+  it('lowers confidence for parallel loops and ignores reads and one-row loops', () => {
+    const parallel = findings(
+      flow({ L: foreach(LIST, { U: dataverse('UpdateRecord') }, { concurrency: 20 }) }),
+      'RES08',
+    );
+    expect(parallel[0]?.confidence).toBe(0.5);
+    expect(findings(flow({ L: foreach(LIST, { G: dataverse('GetItem') }) }), 'RES08')).toEqual([]);
+    const oneRow = flow({
+      List_rows: dataverse('ListRecords', { $top: 1 }),
+      L: foreach(LIST, { U: dataverse('UpdateRecord') }),
+    });
+    expect(findings(oneRow, 'RES08')).toEqual([]);
+  });
+});
+
+describe('SPD05 loop used to filter items', () => {
+  const check = (actions: Record<string, unknown>, elseActions: Record<string, unknown> = {}) => ({
+    type: 'If',
+    runAfter: {},
+    expression: { equals: ["@item()?['status']", 'Open'] },
+    actions,
+    else: { actions: elseActions },
+  });
+
+  it('flags a loop whose only step is a one-sided condition on the item', () => {
+    const [finding] = findings(
+      flow({ L: foreach(LIST, { If: check({ U: dataverse('UpdateRecord') }) }) }),
+      'SPD05',
+    );
+    expect(finding?.target.name).toBe('L');
+  });
+
+  it('ignores conditions with an else branch, other steps, or no item reference', () => {
+    expect(
+      findings(
+        flow({ L: foreach(LIST, { If: check({ A: compose(1) }, { B: compose(2) }) }) }),
+        'SPD05',
+      ),
+    ).toEqual([]);
+    expect(
+      findings(
+        flow({ L: foreach(LIST, { If: check({ A: compose(1) }), C: compose(1) }) }),
+        'SPD05',
+      ),
+    ).toEqual([]);
+    const other = { ...check({ A: compose(1) }), expression: { equals: ["@variables('x')", 1] } };
+    expect(findings(flow({ L: foreach(LIST, { If: other }) }), 'SPD05')).toEqual([]);
+  });
+});
+
+describe('SEC01 secret visible in run history', () => {
+  const getSecret = (secure: boolean) => ({
+    runAfter: {},
+    type: 'OpenApiConnection',
+    inputs: {
+      host: {
+        apiId: '/providers/Microsoft.PowerApps/apis/shared_keyvault',
+        operationId: 'GetSecret',
+      },
+      parameters: { secretName: 'api-key' },
+    },
+    ...(secure ? { runtimeConfiguration: { secureData: { properties: ['outputs'] } } } : {}),
+  });
+  const useSecret = (secure: boolean) => ({
+    runAfter: { Get_secret: ['Succeeded'] },
+    type: 'Http',
+    inputs: {
+      method: 'GET',
+      uri: 'https://example.com',
+      headers: { 'x-api-key': "@body('Get_secret')?['value']" },
+    },
+    ...(secure ? { runtimeConfiguration: { secureData: { properties: ['inputs'] } } } : {}),
+  });
+
+  it('flags Get secret without secure outputs and users without secure inputs', () => {
+    const result = findings(flow({ Get_secret: getSecret(false), H: useSecret(false) }), 'SEC01');
+    expect(result.map((f) => f.target.name)).toEqual(['Get_secret', 'H']);
+    expect(result[0]?.category).toBe('security');
+  });
+
+  it('accepts secured steps', () => {
+    expect(findings(flow({ Get_secret: getSecret(true), H: useSecret(true) }), 'SEC01')).toEqual(
+      [],
+    );
+  });
+
+  it('caps the grade at C', () => {
+    const { score } = analyseFlow(flow({ Get_secret: getSecret(false) }));
+    expect(score.capped).toBe(true);
+    expect(score.grade).toBe('C');
+  });
+});
+
+describe('SEC02 hard-coded credential', () => {
+  const call = (inputs: Record<string, unknown>) => ({
+    runAfter: {},
+    type: 'Http',
+    inputs: { method: 'GET', uri: 'https://example.com', ...inputs },
+  });
+
+  it.each([
+    [{ headers: { Authorization: 'Bearer abc123' } }, 'Authorization header'],
+    [{ headers: { 'Ocp-Apim-Subscription-Key': 'abc' } }, 'Ocp-Apim-Subscription-Key header'],
+    [{ authentication: { type: 'Basic', username: 'u', password: 'p' } }, 'password of its Basic'],
+    [{ uri: 'https://f.azurewebsites.net/api/x?code=abc&y=1' }, 'code= parameter'],
+  ])('flags %j', (inputs, where) => {
+    const [finding] = findings(flow({ H: call(inputs) }), 'SEC02');
+    expect(finding?.message).toContain(where);
+  });
+
+  it.each([
+    { headers: { Authorization: "Bearer @{body('Get_token')?['access_token']}" } },
+    { headers: { 'Content-Type': 'application/json' } },
+    { authentication: { type: 'Basic', username: 'u', password: "@parameters('pwd')" } },
+    { uri: "https://f.azurewebsites.net/api/x?code=@{parameters('key')}" },
+    { uri: "@parameters('url')" },
+  ])('accepts %j', (inputs) => {
+    expect(findings(flow({ H: call(inputs) }), 'SEC02')).toEqual([]);
+  });
+});
+
+describe('SEC03 HTTP trigger anyone can call', () => {
+  const trigger = (inputs: Record<string, unknown>, kind = 'Http') => ({
+    manual: { type: 'Request', kind, inputs: { schema: {}, ...inputs } },
+  });
+
+  it('flags Anyone and the legacy setting', () => {
+    expect(
+      findings(flow({}, trigger({ triggerAuthenticationType: 'All' })), 'SEC03')[0]?.confidence,
+    ).toBe(0.8);
+    expect(findings(flow({}, trigger({})), 'SEC03')[0]?.confidence).toBe(0.6);
+  });
+
+  it('accepts tenant-only triggers and other manual triggers', () => {
+    expect(findings(flow({}, trigger({ triggerAuthenticationType: 'Tenant' })), 'SEC03')).toEqual(
+      [],
+    );
+    expect(findings(flow({}, trigger({}, 'Button')), 'SEC03')).toEqual([]);
   });
 });
 

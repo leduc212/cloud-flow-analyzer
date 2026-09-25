@@ -35,7 +35,7 @@ export interface PaneResult {
   displayName: string;
   grade: string;
   overall: number;
-  categories: { speed: number; resources: number; reliability: number };
+  categories: { speed: number; resources: number; reliability: number; security: number };
   actionCount: number;
   estimate: { total: number; assumed: boolean };
   findings: PaneFinding[];
@@ -60,6 +60,7 @@ export function buildPaneResult(
       speed: score.categories.speed.score,
       resources: score.categories.resources.score,
       reliability: score.categories.reliability.score,
+      security: score.categories.security.score,
     },
     actionCount: tree.actionCount,
     estimate,

@@ -6,7 +6,13 @@ import { parseFlowUrl } from '../shared/flow-url.ts';
 import type { BackgroundMessage } from '../shared/messages.ts';
 import type { PaneFinding, PaneResult } from '../shared/pane-result.ts';
 import styles from './pane.css?raw';
-import { findingKey, markdownReport, scoreWithout } from './report.ts';
+import {
+  CAPPED_NOTE,
+  CATEGORY_LABELS,
+  findingKey,
+  markdownReport,
+  scoreWithout,
+} from './report.ts';
 import { designerCheck, revealAction } from './reveal.ts';
 
 export const HOST_ID = 'cfa-pane-host';
@@ -278,19 +284,22 @@ export class Pane {
         { class: 'summary' },
         h(
           'div',
-          { class: `grade ${score.grade}`, title: `Score ${score.overall} / 100` },
+          {
+            class: `grade ${score.grade}`,
+            title: `Score ${score.overall} / 100${score.capped ? ` (${CAPPED_NOTE})` : ''}`,
+          },
           score.grade,
         ),
         h(
           'div',
           { class: 'scores' },
-          'Speed ',
-          h('b', {}, score.categories.speed.score),
-          ' · Resources ',
-          h('b', {}, score.categories.resources.score),
-          ' · Reliability ',
-          h('b', {}, score.categories.reliability.score),
-          h('br'),
+          h(
+            'div',
+            { class: 'categories' },
+            ...CATEGORY_LABELS.map(([category, name]) =>
+              h('span', {}, `${name} `, h('b', {}, score.categories[category].score)),
+            ),
+          ),
           `${result.actionCount} actions · ~${result.estimate.total.toLocaleString('en-US')} per run${result.estimate.assumed ? ' (estimated)' : ''}`,
         ),
       ),

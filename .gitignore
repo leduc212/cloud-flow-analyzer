@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.zip
+*.tsbuildinfo
+.DS_Store
+# Raw (not anonymised) capture files never go in git
+fixtures/captures/raw/
+*.raw.json

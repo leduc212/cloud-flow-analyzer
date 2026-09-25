@@ -1,10 +1,12 @@
 import {
   DATAVERSE,
+  DATAVERSE_UPDATES,
   DATAVERSE_UPDATE_MESSAGES,
   EXCEL,
   SHAREPOINT,
   SQL,
   listOperation,
+  sameTable,
   writeOperation,
 } from '../connectors.ts';
 import { asNumber, asString, hasValue } from '../definition.ts';
@@ -174,10 +176,16 @@ export const RES04: Rule = {
           : noColumns
             ? `${what} returns every column: no column list is set.`
             : `${what} reads every row: no filter and no row limit.`;
+      // Pagination makes an unfiltered query read far more than one page.
+      const paged = node.settings.paginationMinItems ?? 0;
+      const bulk = noRows && paged > 5000;
       matches.push({
         target: actionTarget(node),
-        message,
-        confidence: noColumns ? 0.8 : 0.6,
+        message: bulk
+          ? `${message} Pagination is on, so each run can read up to ${paged.toLocaleString('en-US')} rows.`
+          : message,
+        confidence: noColumns || bulk ? 0.8 : 0.6,
+        ...(bulk ? { severity: 'high' as const } : {}),
       });
     }
     return matches;
@@ -272,4 +280,63 @@ export const RES06: Rule = {
   },
 };
 
-export const RESOURCE_RULES: Rule[] = [RES01, RES02, RES03, RES04, RES06, RES08];
+/** `…['body/<column>']` / `…?['<column>']` read from the trigger or from an action. */
+function columnSources(value: unknown, column: string): string[] {
+  if (typeof value !== 'string') return [];
+  const col = column.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `(triggerOutputs\\(\\)|triggerBody\\(\\)|(?:outputs|body)\\('((?:[^']|'')+)'\\))\\??\\['(?:body/)?${col}'\\]`,
+    'g',
+  );
+  return [...value.matchAll(pattern)].map((m) => m[2]?.replace(/''/g, "'") ?? 'trigger');
+}
+
+export const RES07: Rule = {
+  id: 'RES07',
+  category: 'resources',
+  severity: 'low',
+  confidence: 0.6,
+  title: 'Update writes back values that did not change',
+  why: 'Dataverse updates every column sent in an update, even when the value is the same. Plug-ins and flows that watch those columns run anyway, and auditing shows changes that did not happen. Microsoft recommends sending only the columns that change.',
+  fix: 'Only set the columns this step really changes. When it updates "if something changed", compare first and skip the update when nothing did (a Condition before it), instead of writing back the row\'s current values.',
+  example: {
+    before:
+      "Update a row  Orders\n  City: if(new city is different, new city, outputs('Get_order')?['body/city'])\n  … 11 more like it",
+    after:
+      'Condition  any of the new values differs from the order\n  └ Yes: Update a row  Orders  (only the columns that changed)',
+  },
+  docs: [DOCS.dataverseUpdates],
+  check({ tree }) {
+    const trigger = tree.triggers.find((t) => t.kind === 'dataverse');
+    const triggerTable = asString(trigger?.parameters['subscriptionRequest/entityname']);
+    const matches: RuleMatch[] = [];
+    for (const node of tree.all) {
+      if (node.connector !== DATAVERSE || !DATAVERSE_UPDATES.has(node.operationId ?? '')) continue;
+      const entity = asString(node.parameters.entityName);
+      if (!entity) continue;
+      // The row's own values: from a trigger on this table, or a read of this table.
+      const ownRow = (source: string): boolean => {
+        if (source === 'trigger') return Boolean(triggerTable && sameTable(triggerTable, entity));
+        const read = tree.byName.get(source);
+        return (
+          read?.connector === DATAVERSE &&
+          read.operationId === 'GetItem' &&
+          asString(read.parameters.entityName)?.toLowerCase() === entity.toLowerCase()
+        );
+      };
+      const copied = Object.entries(node.parameters)
+        .filter(([key]) => key.startsWith('item/'))
+        .map(([key]) => key.slice('item/'.length))
+        .filter((column) => columnSources(node.parameters[`item/${column}`], column).some(ownRow));
+      if (copied.length < 3) continue;
+      const shown = copied.slice(0, 4).join(', ');
+      matches.push({
+        target: actionTarget(node),
+        message: `${q(node.name)} can write back the row's current value in ${plural(copied.length, 'column')} (${shown}${copied.length > 4 ? '…' : ''}). Those columns count as updated on every run, changed or not.`,
+      });
+    }
+    return matches;
+  },
+};
+
+export const RESOURCE_RULES: Rule[] = [RES01, RES02, RES03, RES04, RES06, RES07, RES08];

@@ -8,6 +8,7 @@ import {
   SHAREPOINT_UPDATE_TRIGGERS,
   connectorName,
   listOperation,
+  sameTable,
 } from '../connectors.ts';
 import { asNumber, asObject, asString, hasValue, isObject } from '../definition.ts';
 import { collectStrings } from '../expressions.ts';
@@ -19,7 +20,16 @@ import {
   ownExpressions,
 } from '../parser.ts';
 import type { ActionNode, FlowTree, TriggerNode } from '../types.ts';
-import { DOCS, FLOW_TARGET, actionTarget, plural, q, type Rule, type RuleMatch } from './rule.ts';
+import {
+  DOCS,
+  FLOW_TARGET,
+  actionTarget,
+  plural,
+  q,
+  triggerTarget,
+  type Rule,
+  type RuleMatch,
+} from './rule.ts';
 
 export const REL01: Rule = {
   id: 'REL01',
@@ -227,18 +237,6 @@ export const REL03: Rule = {
     return matches;
   },
 };
-
-/** `contacts` (trigger logical name) matches `contacts`, `contactses` or `accounties` (entity set names). */
-function sameTable(logicalName: string, entityName: string): boolean {
-  const table = logicalName.toLowerCase();
-  const target = entityName.toLowerCase();
-  return (
-    target === table ||
-    target === `${table}s` ||
-    target === `${table}es` ||
-    (table.endsWith('y') && target === `${table.slice(0, -1)}ies`)
-  );
-}
 
 function listParam(value: unknown): string[] {
   return (asString(value) ?? '')
@@ -518,12 +516,53 @@ export const REL10: Rule = {
   },
 };
 
+function minutes(ms: number): string {
+  return ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${(ms / 60_000).toFixed(1)} min`;
+}
+
+export const REL06: Rule = {
+  id: 'REL06',
+  category: 'reliability',
+  severity: 'medium',
+  confidence: 0.8,
+  title: 'Runs wait before they start',
+  why: 'A run normally starts its first step within a second. When runs wait minutes instead, work piles up: with a concurrency limit on the trigger, each run queues behind the ones still running; without one, Power Automate may be slowing the flow down because it went over its request limits.',
+  fix: "If runs don't depend on each other, raise the trigger's concurrency limit or turn it off (trigger Settings → Concurrency control). If they must run one at a time, make each run shorter (see the speed findings) so the queue clears faster.",
+  docs: [DOCS.limits, DOCS.requestLimits],
+  check({ tree, runs }) {
+    if (!runs) return [];
+    const { startDelayP50Ms: median, startDelayP95Ms: slowest, sampled } = runs.stats;
+    if (median < 30_000 && slowest < 120_000) return [];
+    const trigger = tree.triggers[0];
+    if (!trigger) return [];
+    const waited = `In ${plural(sampled, 'recent run')}, runs waited a median of ${minutes(median)} (slowest 5%: ${minutes(slowest)}) before their first step`;
+    if (trigger.concurrency !== undefined) {
+      return [
+        {
+          target: triggerTarget(trigger),
+          message: `${waited}: the trigger lets only ${plural(trigger.concurrency, 'run')} go at a time, so the others queue.`,
+        },
+      ];
+    }
+    return [
+      {
+        target: triggerTarget(trigger),
+        message: `${waited}, with no concurrency limit on the trigger. Check the flow's Analytics: Power Automate slows down flows that go over their request limits.`,
+        severity: 'low',
+        confidence: 0.5,
+        fix: "Check the flow's Analytics and your request limits (see RES06). Cut the actions each run executes, or add capacity (a Process licence or request add-ons).",
+      },
+    ];
+  },
+};
+
 export const RELIABILITY_RULES: Rule[] = [
   REL01,
   REL02,
   REL03,
   REL04,
   REL05,
+  REL06,
   REL07,
   REL08,
   REL09,

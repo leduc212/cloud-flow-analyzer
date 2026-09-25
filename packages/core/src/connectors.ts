@@ -192,3 +192,18 @@ export const SHAREPOINT_UPDATE_TRIGGERS = new Set(['GetOnUpdatedItems', 'GetOnCh
 export const SHAREPOINT_UPDATE = 'PatchItem';
 /** Dataverse operations that update a row. */
 export const DATAVERSE_UPDATES = new Set(['UpdateRecord', 'UpdateOnlyRecord']);
+
+/**
+ * A table's logical name (`contact`, `category`) against an entity set name (`contacts`,
+ * `categories`): Dataverse triggers use the first, row actions the second.
+ */
+export function sameTable(logicalName: string, entityName: string): boolean {
+  const table = logicalName.toLowerCase();
+  const target = entityName.toLowerCase();
+  return (
+    target === table ||
+    target === `${table}s` ||
+    target === `${table}es` ||
+    (table.endsWith('y') && target === `${table.slice(0, -1)}ies`)
+  );
+}

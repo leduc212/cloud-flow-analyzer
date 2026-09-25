@@ -148,6 +148,12 @@ export interface RunStats {
    * actions not. Actions inside loops whose repetitions weren't read count once per iteration.
    */
   actionsPerRun?: { mean: number; p50: number; p95: number };
+  /**
+   * Time from a run's start to its first action: normally a fraction of a second, longer when
+   * the run waited in a queue (trigger concurrency limit) or was slowed down.
+   */
+  startDelayP50Ms: number;
+  startDelayP95Ms: number;
 }
 
 const FINISHED = new Set(['succeeded', 'failed', 'cancelled', 'timedout', 'terminated']);
@@ -296,6 +302,14 @@ export function summariseRuns(tree: FlowTree, samples: RunSample[]): RunStats {
   }
 
   const perRun = runs.map((run) => actionsInRun(tree, run));
+  const delays = runs.flatMap((run) => {
+    const starts = run.actions
+      .map((a) => (a.startTime ? Date.parse(a.startTime) : NaN))
+      .filter(Number.isFinite);
+    const start = run.startTime ? Date.parse(run.startTime) : NaN;
+    if (starts.length === 0 || !Number.isFinite(start)) return [];
+    return [Math.max(0, Math.min(...starts) - start)];
+  });
   return {
     sampled: runs.length,
     statuses,
@@ -303,6 +317,8 @@ export function summariseRuns(tree: FlowTree, samples: RunSample[]): RunStats {
     durationP95Ms: percentile(runDurations, 95),
     actions,
     loops: loopIterations(tree, runs),
+    startDelayP50Ms: percentile(delays, 50),
+    startDelayP95Ms: percentile(delays, 95),
     ...(perRun.length > 0
       ? {
           actionsPerRun: {

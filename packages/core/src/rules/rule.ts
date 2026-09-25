@@ -66,6 +66,9 @@ export const DOCS = {
     'https://learn.microsoft.com/en-us/sharepoint/dev/business-apps/power-automate/guidance/working-with-get-items-and-get-files',
   expressions: 'https://learn.microsoft.com/en-us/power-automate/expression-cookbook',
   httpTrigger: 'https://learn.microsoft.com/en-us/power-automate/oauth-authentication',
+  naming: `${GUIDANCE}/use-consistent-naming-conventions`,
+  dataverseUpdates:
+    'https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/update-delete-entities-using-web-api',
   requestLimits:
     'https://learn.microsoft.com/en-us/power-platform/admin/api-request-limits-allocations',
   whatCounts:

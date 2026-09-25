@@ -134,11 +134,11 @@ Each rule has: `id`, `category` (speed / resources / reliability / security / ma
 | SPD02 | v0.1 | `SetVariable` / `AppendToArrayVariable` / `AppendToStringVariable` / `IncrementVariable` / `DecrementVariable` inside a sequential `Foreach` (in a concurrent loop this is REL01 instead) | Use **Select** / **Filter array** / **Compose** / `union()` / `join()`. Faster, and makes concurrency safe |
 | SPD03 📊 | v0.1 | Per-item reads inside a `Foreach`: single-record reads (Dataverse *Get a row*, SharePoint *Get item*, Office 365 Users *Get user profile*…), or list queries whose parameters use the current item (N+1 queries). HTTP GET using the current item: lower confidence | Do one bulk query before the loop (`$filter`, `$expand`, FetchXML), then Filter array |
 | SPD04 | v0.1 | Nested `Foreach` (inner loops always run one at a time) | Flatten with Select / `xpath()`, query the child rows with `$expand`, or move the inner loop into a child flow |
-| SPD05 📊 | v0.2 (definition), v0.3 (📊) | Loop body is a single `If` on the loop item with an empty `else`. Later: run data shows most iterations take the empty branch | Move the condition into the source query `$filter`, or use Filter array before the loop |
+| SPD05 📊 | v0.2, 📊 v0.3 ✅ | Loop body is a single `If` on the loop item with an empty `else`. With runs: the share of checked items whose Yes branch did nothing (≥ 80% → high, < 20% → low, "filtering first would save little") | Move the condition into the source query `$filter`, or use Filter array before the loop |
 | SPD06 | later | Independent actions chained one after another (no data dependency). Many false positives, because order often matters for side effects (create a record, then send an email). Low severity, low confidence, off by default | Run them as parallel branches |
 | SPD07 📊 | v0.1 | A child flow (`Workflow` action) inside a loop | Send the whole batch to the child flow in one call |
 | SPD08 | v0.1 | `Until` containing a `Wait`/Delay (polling) | Use a trigger or webhook, or a longer interval |
-| SPD09 | v0.3 | The same record or endpoint read repeatedly; the same long expression repeated | Read or calculate once, then reuse via Compose |
+| SPD09 | v0.3 ✅ | The same list or single-record read, with identical parameters, twice or more outside loops; not when the reads are in different branches of one Condition/Switch, or the flow writes to that table or list (a re-read may be on purpose). The repeated-expression half was dropped: expressions cost no requests, and the capture's repeats are an email template (a naming/maintenance matter) | Read once, reuse the first step's output |
 | SPD10 | v0.1 | `Foreach` over the rows of a list query limited to one row (`$top` = 1) | Use `first()` and drop the loop |
 
 ### Resources (every action counts toward Power Platform request limits)
@@ -148,9 +148,9 @@ Each rule has: `id`, `category` (speed / resources / reliability / security / ma
 | RES02 | v0.1 | Dataverse trigger (`SubscribeWebhookTrigger`) whose `subscriptionRequest/message` includes Update (3 = Modified, 4 = Added or Modified, 6 = Modified or Deleted, 7 = all; verify codes in S1) without `subscriptionRequest/filteringattributes` | Set "Select columns" (and "Filter rows" if only some rows matter) |
 | RES03 | v0.1 | `Recurrence` trigger every second, or every 1–5 minutes | Use an event trigger or a longer interval |
 | RES04 | v0.1 | List queries without a column limit (Dataverse `$select` / FetchXML, SQL and Excel `$select`), or without any of `$filter` / `$top` / FetchXML | Add select / filter / top |
-| RES05 | v0.3 | `paginationPolicy.minimumItemCount` very high (over 5,000) | Lower it, or filter at the source |
+| RES05 | merged | Folded into RES04: an unfiltered query with pagination over 5,000 is raised to high and says how many rows each run can read. In the capture every high threshold (20,000–50,000) was on a filtered query, which is fine | Filter at the source |
 | RES06 📊 | v0.2 ✅ | Requests a day (mean measured requests per run × runs a day) ≥ 20% of the daily limit the user picked (low), ≥ 50% (medium), ≥ 100% (high). Recent sample only. Requests are counted as Microsoft does: trigger, every action that ran, once per loop iteration, retries included, skipped actions not | Fewer actions per run, trigger conditions, or more capacity (Process licence, add-ons) |
-| RES07 | v0.3 | Dataverse *Update a row* that sets more than 10 columns, or maps every column from the trigger body | Send only changed columns (avoids triggering other automations) |
+| RES07 | v0.3 ✅ | Dataverse update where 3+ columns can fall back to the row's own current value (the same column read from the trigger on that table, or a *Get a row* of that table). Column count alone was dropped: 10–12 columns is normal in the capture, while 2 flows write back 4 and 12 unchanged columns ("new value if different, else the current one"). Dataverse docs: an update sets every column sent, even with the same value, which can fire business logic and auditing | Send only changed columns; compare first and skip the update when nothing changed |
 | RES08 | v0.2 | Create / update / delete one record per loop item (Dataverse, SharePoint, SQL, Excel), grouped per loop; lower confidence when the loop is concurrent; skips one-row loops | Dataverse bulk messages (`CreateMultiple` / `UpdateMultiple`) or `$batch`, SharePoint `$batch`, SQL stored procedure, Excel Office Script; at least concurrency (Microsoft anti-pattern) |
 
 ### Reliability
@@ -161,7 +161,7 @@ Each rule has: `id`, `category` (speed / resources / reliability / security / ma
 | REL03 📊 | v0.2 ✅ | Retry policy `none` (definition). With runs: retries from `retryHistory` (in both the action list and repetitions, per the Logic Apps API spec): throttled (429) → medium, high if a call failed on it; other retries → low | Default or exponential retry; fewer calls (bulk reads, batched writes, lower concurrency) |
 | REL04 | v0.1 | `Until` with no limits or with the default ones (count 60, timeout PT1H) | Set explicit limits and check the exit condition after the loop |
 | REL05 | v0.1 | Close to platform limits: 400+ actions (limit 500) or nesting depth 7+ (limit 8) | Split into child flows |
-| REL06 📊 | v0.3 | Trigger concurrency limited to 1, and run data shows runs waiting for each other | Review whether serial runs are really needed |
+| REL06 📊 | v0.3 ✅ | Runs wait before their first step (median ≥ 30 s or slowest 5% ≥ 2 min; normally ~0.1 s in the capture). With a trigger concurrency limit: medium, runs queue. Without one: low, possible slow-down for going over request limits | Raise or remove the limit if runs are independent; shorter runs; check request limits |
 | REL07 | v0.2 | Dataverse update of the triggering table (logical name matched to the entity set name), or SharePoint *Update item* on the triggering list, when the trigger has no trigger condition and its filtering columns include a column the update sets | Trigger condition, or filtering columns the update doesn't change (Microsoft anti-pattern: infinite loop) |
 | REL08 | v0.2 | Error path (runs after Failed / TimedOut, not after Succeeded) where nothing in it or after it is a Terminate *Failed* / *Cancelled* or a Response. Skips per-item handlers inside loops and request-triggered flows that answer with a Response. One finding per flow | End the Catch with Terminate (Failed) |
 | REL09 | v0.2 | `body('X')…[0]` / `outputs('X')…?[0]` on a list result (list query, Filter array, Select, `…['value']`) with no `empty()` / `length()` in the same expression and no enclosing Condition on X. Grouped per source list | `first()` with an empty check, or a `length()` Condition |
@@ -178,7 +178,7 @@ Each rule has: `id`, `category` (speed / resources / reliability / security / ma
 | ID | In | Detects |
 |---|---|---|
 | MNT01 | later | Hard-coded GUIDs, URLs, emails → use environment variables |
-| MNT02 | v0.3 | Default action names (`Compose_3`, `Condition_2`) |
+| MNT02 | v0.3 ✅ | 3+ steps with the designer's default names (`Compose_3`, `Condition_2`, `Apply_to_each`…), one finding per flow, low, not in the grade. Capture: 13 of 28 flows |
 | MNT03 | later | Scopes and actions with no descriptive name or note |
 
 ### Proposed rules (research 2026-09-25)
@@ -403,7 +403,7 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 
 ### v0.3: Environment and remaining rules
 - ✅ "Analyse all" (the **All flows** page, opened from the popup on the current environment): lists the default and admin flow lists merged (admin quietly skipped for non-admins), with trigger, state and suspension from each flow's list entry; **Analyse all** fetches every definition through the rate-limited client (admin endpoint for admin-only flows) and runs the definition rules; worst grade first, filters, search, Markdown export; **Open** opens the flow's page and shows the pane once the tab is really on the flow (sign-in redirects and error pages are waited out). Analyses are kept in `chrome.storage.session` keyed by flow + `lastModifiedTime`, so they vanish with the browser and edited flows are analysed again. This replaces the separate full-page Flows app of the first plan. Pre-screening from `definitionSummary` alone was dropped: fetching each definition is one request per flow and gives the real grade.
-- Remaining rules (SPD05 📊, SPD09, RES05, RES07, REL06, MNT02).
+- ✅ Remaining rules: SPD05 📊, SPD09, RES05 (merged into RES04), RES07, REL06 📊, MNT02 (see §4 for what the capture changed in each).
 - Demo site on GitHub Pages: sample flows plus a "paste a flow definition JSON" mode. Make the repo public at this point.
 
 ### v1.0: Polish and publish
@@ -428,7 +428,7 @@ A **capture tool** page ships inside the extension for the spikes. It shows the 
 ## 12. Decisions (2026-09-25)
 1. Name: **Cloud Flow Analyzer**.
 2. Run sampling: 20 runs by default (5–100); at most 500 repetitions per inner loop action per run.
-3. Maintainability: off during v0.x; MNT02 arrives in v0.3.
+3. Maintainability: MNT02 is on (revised 2026-09-25): one grouped low finding per flow, and maintainability never counts toward the grade, so it informs without adding noise to the score.
 4. Distribution: Edge Add-ons + GitHub Releases; Chrome Web Store decided at v1.0.
 5. Licence limits: the user sets their daily request limit (with presets); no built-in numbers.
 6. Flows listed: My flows, Shared with me, solution flows, and all flows in the environment for admins.

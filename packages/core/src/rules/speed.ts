@@ -5,6 +5,7 @@ import {
   connectorName,
   listOperation,
   singleReadOperation,
+  writeOperation,
 } from '../connectors.ts';
 import { descendants, enclosingLoops, isConcurrentLoop, singleRowSource } from '../parser.ts';
 import { hasUnreadableReferences } from '../expressions.ts';
@@ -358,7 +359,8 @@ export const SPD05: Rule = {
       "Filter array  orders where item()?['status'] = 'Open'\nApply to each  body('Filter_array')\n  └ Update a row",
   },
   docs: [DOCS.relevantData, DOCS.dataOperations],
-  check({ tree }) {
+  usesRunData: true,
+  check({ tree, runs }) {
     const matches: RuleMatch[] = [];
     for (const loop of tree.all) {
       if (loop.kind !== 'foreach' || loop.children.length !== 1) continue;
@@ -367,13 +369,107 @@ export const SPD05: Rule = {
       // With work in both branches, the condition routes items rather than filtering them.
       if (check.children.some((c) => c.branch === 'else')) continue;
       if (!check.usesItem && !check.loopItemRefs.includes(loop.name)) continue;
+      const message = `${q(loop.name)} runs ${q(check.name)} on every item and only does work when it is true: the items could be filtered before the loop.`;
+      // With runs: how many items the condition turned away (from the first step of Yes).
+      const checked = runs?.stats.actions.get(check.name)?.executions ?? 0;
+      const yes = check.children.find((c) => c.branch === 'actions');
+      const worked = yes ? runs?.stats.actions.get(yes.name) : undefined;
+      if (!worked || checked === 0) {
+        matches.push({ target: actionTarget(loop), message });
+        continue;
+      }
+      const idle = Math.max(0, Math.min(1, 1 - worked.executions / checked));
+      const items = `${checked.toLocaleString('en-US')} items checked in recent runs`;
       matches.push({
         target: actionTarget(loop),
-        message: `${q(loop.name)} runs ${q(check.name)} on every item and only does work when it is true: the items could be filtered before the loop.`,
+        message:
+          idle < 0.2
+            ? `${message} In the ${items}, ${Math.round((1 - idle) * 100)}% passed, so filtering first would save little today.`
+            : `${message} ${Math.round(idle * 100)}% of the ${items} did nothing.`,
+        severity: idle >= 0.8 ? 'high' : idle < 0.2 ? 'low' : 'medium',
+        confidence: 0.9,
       });
     }
     return matches;
   },
 };
 
-export const SPEED_RULES: Rule[] = [SPD01, SPD02, SPD03, SPD04, SPD05, SPD07, SPD08, SPD10];
+/** Which branch of which Condition or Switch each ancestor puts the action in. */
+function branches(tree: FlowTree, node: ActionNode): Map<string, string> {
+  const result = new Map<string, string>();
+  let child: ActionNode | undefined = node;
+  while (child?.parentName !== undefined) {
+    const parent = tree.byName.get(child.parentName);
+    if (!parent) break;
+    if (parent.kind === 'condition' || parent.kind === 'switch') {
+      result.set(parent.name, child.branch ?? 'actions');
+    }
+    child = parent;
+  }
+  return result;
+}
+
+/** True when the two actions are in different branches of the same Condition or Switch. */
+function exclusive(tree: FlowTree, a: ActionNode, b: ActionNode): boolean {
+  const left = branches(tree, a);
+  for (const [parent, branch] of branches(tree, b)) {
+    const other = left.get(parent);
+    if (other !== undefined && other !== branch) return true;
+  }
+  return false;
+}
+
+/** The table or list a connector step reads or writes. */
+function tableOf(node: ActionNode): string {
+  return String(node.parameters.entityName ?? node.parameters.table ?? '').toLowerCase();
+}
+
+export const SPD09: Rule = {
+  id: 'SPD09',
+  category: 'speed',
+  severity: 'low',
+  confidence: 0.6,
+  title: 'Same data read more than once',
+  why: 'Each read is a request that takes time and counts toward your limits. Reading the same record or list again with the same inputs returns what the flow already has.',
+  fix: "Read it once and use the first step's output everywhere (for example outputs('Get_a_row')). If the flow changes the data in between and needs the new values, keep the second read and add a note saying why.",
+  example: {
+    before:
+      'Get a row  Accounts, ID: …   (step 2)\n…\nGet a row  Accounts, ID: …   (step 9, same inputs)',
+    after: "Get a row  Accounts, ID: …   (step 2)\n…\nstep 9 uses outputs('Get_a_row')",
+  },
+  docs: [DOCS.relevantData, DOCS.understandLimits],
+  check({ tree }) {
+    const groups = new Map<string, ActionNode[]>();
+    for (const node of tree.all) {
+      if (!singleReadOperation(node.connector, node.operationId)) {
+        if (!listOperation(node.connector, node.operationId)) continue;
+      }
+      // Reads inside loops are SPD03's.
+      if (enclosingLoops(tree, node).length > 0) continue;
+      const key = `${node.connector}|${node.operationId}|${JSON.stringify(node.parameters)}`;
+      groups.set(key, [...(groups.get(key) ?? []), node]);
+    }
+    // A write to the same table or list means a second read may be on purpose.
+    const written = new Set(
+      tree.all
+        .filter((n) => writeOperation(n.connector, n.operationId))
+        .map((n) => `${n.connector}|${tableOf(n)}`),
+    );
+    const matches: RuleMatch[] = [];
+    for (const reads of groups.values()) {
+      const [first, ...rest] = reads as [ActionNode, ...ActionNode[]];
+      if (written.has(`${first.connector}|${tableOf(first)}`)) continue;
+      const repeats = rest.filter((n) => !exclusive(tree, first, n));
+      const [repeat] = repeats;
+      if (!repeat) continue;
+      const others = repeats.length > 1 ? ` (and ${plural(repeats.length - 1, 'other step')})` : '';
+      matches.push({
+        target: actionTarget(repeat),
+        message: `${q(repeat.name)}${others} reads the same data as ${q(first.name)}, with the same inputs.`,
+      });
+    }
+    return matches;
+  },
+};
+
+export const SPEED_RULES: Rule[] = [SPD01, SPD02, SPD03, SPD04, SPD05, SPD07, SPD08, SPD09, SPD10];

@@ -27,21 +27,24 @@ See the [project plan](docs/PLAN.md).
 | SPD02 | Speed       | Variables written inside a loop (use Select / Filter array)                  |
 | SPD03 | Speed       | 📊 Records read one at a time inside a loop (N+1 queries)                    |
 | SPD04 | Speed       | Loop inside a loop                                                           |
-| SPD05 | Speed       | Loop that only filters items with a Condition (filter before the loop)       |
+| SPD05 | Speed       | 📊 Loop that only filters items with a Condition (filter before the loop)    |
 | SPD07 | Speed       | 📊 Child flow called inside a loop                                           |
 | SPD08 | Speed       | Polling with Do until and Delay                                              |
+| SPD09 | Speed       | Same record or list read twice with the same inputs                          |
 | SPD10 | Speed       | Loop over a query that returns one row                                       |
 | RES01 | Resources   | 📊 Most runs stop at a first Condition a trigger condition could do instead  |
 | RES02 | Resources   | Dataverse trigger without "Select columns"                                   |
 | RES03 | Resources   | Recurrence every few minutes or seconds                                      |
-| RES04 | Resources   | List query without column list, filter or row limit                          |
+| RES04 | Resources   | List query without column list, filter or row limit (worse with pagination)  |
 | RES06 | Resources   | 📊 Requests a day take a large share of the daily limit you set              |
+| RES07 | Resources   | Dataverse update that writes back the row's unchanged values                 |
 | RES08 | Resources   | 📊 One create / update / delete per loop item (use bulk or batch requests)   |
 | REL01 | Reliability | Parallel loop writing variables (race condition)                             |
 | REL02 | Reliability | No error handling (Try / Catch)                                              |
 | REL03 | Reliability | Retry policy set to None; 📊 calls throttled (429) or retried in recent runs |
 | REL04 | Reliability | Do until with default limits                                                 |
 | REL05 | Reliability | Close to the 500-action or 8-level nesting limits                            |
+| REL06 | Reliability | 📊 Runs wait to start (trigger concurrency limit, or throttling)             |
 | REL07 | Reliability | Flow updates the table or list that triggers it (infinite loop)              |
 | REL08 | Reliability | Error path that never ends the run as Failed (failures show as Succeeded)    |
 | REL09 | Reliability | First item of a query read with `[0]` without checking the list is not empty |
@@ -49,6 +52,7 @@ See the [project plan](docs/PLAN.md).
 | SEC01 | Security    | Key Vault secret shown in run history (Secure inputs / outputs off)          |
 | SEC02 | Security    | Password, API key or signature typed into an HTTP action                     |
 | SEC03 | Security    | HTTP trigger that anyone with the URL can call                               |
+| MNT02 | Maintenance | Three or more steps with default names (`Compose 3`); not in the grade       |
 
 📊 = uses measured numbers when you analyse recent runs (see step 7 below).
 

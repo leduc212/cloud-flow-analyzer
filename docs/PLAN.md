@@ -169,6 +169,32 @@ Each rule has: `id`, `category` (speed / resources / reliability / maintainabili
 | MNT02 | v0.3 | Default action names (`Compose_3`, `Condition_2`) |
 | MNT03 | later | Scopes and actions with no descriptive name or note |
 
+### Proposed rules (research 2026-09-25)
+Sources: Microsoft's cloud flow coding guidelines (all 27 pages), limits page, SharePoint "Get items" guidance, Dataverse list-rows docs, the FlowLens and powerautomate-lint rule sets, and community standards (Matthew Devaney, Tom Riha). Each candidate was run against the 28-flow capture; "Capture" shows how many real flows it would flag.
+
+| ID | Category | Detects | Recommendation | Capture | Priority |
+|---|---|---|---|---|---|
+| SEC01 | Security | Azure Key Vault *Get secret* (or any action returning credentials) without **Secure outputs** | Turn on Secure inputs/outputs so secrets don't appear in run history | 1 flow, 4 actions | **High, v0.2** |
+| SEC02 | Security | HTTP action with a literal password, API key or `Authorization` header | Key Vault or environment variable (secret type), secure inputs | 1 flow | **High, v0.2** |
+| SEC03 | Security | *When an HTTP request is received* that anyone with the URL can call, or without secure inputs | "Any user in my tenant" / specific users (Entra ID), secure inputs | 0 | Medium, v0.2 |
+| RES08 | Resources | Create / update / delete one record per loop item (Dataverse rows, SharePoint items) | Bulk: `CreateMultiple` / `UpdateMultiple`, `$batch`, or at least concurrency (Microsoft anti-pattern) | 6 flows, 23 actions | **High, v0.2** |
+| SPD05 | Speed | Loop whose only step is a Condition (filtering inside the loop). Definition-only version of the 📊 rule | Filter at the source (`$filter`) or Filter array before the loop | 2 flows | **High, v0.2** |
+| REL07 | Reliability | Flow updates the row/item that triggers it, with no guard (trigger condition, or filtering columns that exclude the updated columns) | Trigger condition or filtering columns (Microsoft anti-pattern: infinite loop) | 0 (2 flows correctly guarded) | High, v0.2 |
+| REL09 | Reliability | `[0]` on a query result without an emptiness check (`?` doesn't protect against an empty array; to confirm) | `if(empty(…), …, first(…))`, or check `length()` first | 8 flows, 64 places | Medium, v0.2 |
+| REL10 | Reliability | SharePoint *Get items* with no Top Count and no pagination (silently stops at 100 items; with a filter on lists over 5,000 items it can return nothing); Dataverse *List rows* looped over without pagination (stops at 5,000) | Set Top Count or turn on pagination with a threshold | 0 | Medium, v0.2 |
+| REL08 | Reliability | Error path (runs after Failed) that never ends in Terminate *Failed* (or a Response for child flows), so failed runs show as Succeeded | End the Catch scope with Terminate (Failed) | 16 flows (needs refining: child flows reporting via Response are fine) | Medium, v0.2 |
+| REL11 | Reliability | Reference to an action or variable that doesn't exist (evaluates to null silently), or that only matches with different letter case | Fix the name | 2 flows (case-only) | Medium, v0.2 |
+| REL03 | Reliability | (definition part) Retry policy *None* on connector/HTTP calls | Default or exponential retry | 1 flow | Low, v0.2 |
+| REL05 | Reliability | (extend) Switch with 20+ cases (limit 25), 200+ variables (limit 250), expressions over 6,000 characters (limit 8,192) | Split, simplify | – | Low |
+| RES09 | Resources | ETL-sized processing: loops over paginated queries of thousands of rows with writes | Dataflows (Microsoft anti-pattern) | – | Low |
+| MNT01 | Maintainability | Hard-coded URLs, emails, GUIDs (FlowLens FL001–003) | Environment variables | 1 flow | Off by default |
+| MNT02 | Maintainability | Default action names (`Compose_3`) | Descriptive names | 22 flows, 111 actions | Off by default |
+| MNT04 | Maintainability | Deprecated actions/connectors (legacy Common Data Service connector, `SendEmail` V1, `UserProfile` V1…) | Current versions | – | v0.3 |
+
+Not detectable from a definition (run data or tenant settings instead): child flows over 120 seconds (needs the async 202 pattern; v0.2 run data), throttling that turns a flow off after 14 days (run data), flow ownership by a service principal, solution-aware ALM, monitoring and alerting.
+
+**Scoring impact:** security findings need their own category. Proposal: speed 35%, resources 25%, reliability 25%, security 15%, with any high security finding capping the grade at C.
+
 > Before building each rule, check the facts against Microsoft docs (limits, defaults, operation IDs) and record the source in the rule's `docs` field. Confirmed so far: Apply to each runs sequentially by default; concurrency is 1–50 and only applies to the outermost loop; Until defaults are count 60 and PT1H; 500 actions per flow; nesting depth 8.
 
 ---
@@ -395,6 +421,11 @@ Tagline: *"Cloud Flow Analyzer: speed and resource recommendations for Power Aut
 ---
 
 ## 14. Sources
+- Microsoft cloud flow coding guidelines (source): https://github.com/MicrosoftDocs/power-automate-docs/tree/main/articles/guidance/coding-guidelines · [secure data in cloud flows](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/use-secure-inputs-outputs-triggers) · [keep configuration generic](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/keep-flow-configuration-generic) · [asynchronous responses](https://learn.microsoft.com/en-us/power-automate/guidance/coding-guidelines/asychronous-flow-pattern)
+- SharePoint Get items / Get files in-depth: https://learn.microsoft.com/en-us/sharepoint/dev/business-apps/power-automate/guidance/working-with-get-items-and-get-files
+- Dataverse bulk operations: https://learn.microsoft.com/en-us/power-apps/developer/data-platform/bulk-operations
+- powerautomate-lint rules (PAL101–107): https://github.com/verseblocks/powerautomate-lint · FlowLens rules (FL001–004): https://github.com/Yolostream/FlowLens
+- Matthew Devaney coding standards (error handling, performance): https://www.matthewdevaney.com/power-automate-coding-standards-for-cloud-flows/
 - Cloud flow run history in Dataverse: https://learn.microsoft.com/en-us/power-automate/dataverse/cloud-flow-run-metadata
 - Flow Log (flowlog) table: https://learn.microsoft.com/en-us/power-apps/developer/data-platform/reference/entities/flowlog
 - Work with cloud flows using code: https://learn.microsoft.com/en-us/power-automate/manage-flows-with-code

@@ -139,9 +139,10 @@ pnpm --filter @cfa/web dev          # the project site
 SCREENSHOTS=1 pnpm test:e2e screenshots   # refresh .github/images
 ```
 
-Releases: bump the version in `apps/extension/public/manifest.json`, add a `CHANGELOG.md`
-section, and push a `v<version>` tag; the Release workflow publishes the zip. The site deploys
-from `main` (Settings → Pages → Source: GitHub Actions).
+Releases: bump the version in `apps/extension/public/manifest.json` and add a `CHANGELOG.md`
+section. Then run the Release workflow from the Actions tab on `main` (**Release → Run
+workflow**), or push a `v<version>` tag; either way it publishes the zip. The site deploys from
+`main` (Settings → Pages → Source: GitHub Actions).
 
 ## Licence
 

@@ -3,10 +3,10 @@ import { extname, join, resolve } from 'node:path';
 import { designerPage, type DesignerItem } from './designer.ts';
 import { ENV, FLOW, FLOW_API, TOKEN, expect, paneText, test } from './fixtures.ts';
 
-// Refreshes the README images in docs/images: SCREENSHOTS=1 pnpm test:e2e screenshots
-test.skip(!process.env.SCREENSHOTS, 'Set SCREENSHOTS=1 to refresh docs/images.');
+// Refreshes the README images in .github/images: SCREENSHOTS=1 pnpm test:e2e screenshots
+test.skip(!process.env.SCREENSHOTS, 'Set SCREENSHOTS=1 to refresh .github/images.');
 
-const OUT = resolve(import.meta.dirname, '../../../docs/images');
+const OUT = resolve(import.meta.dirname, '../../../.github/images');
 const fixture = (name: string) =>
   JSON.parse(
     readFileSync(resolve(import.meta.dirname, `../../../fixtures/flows/${name}.json`), 'utf8'),

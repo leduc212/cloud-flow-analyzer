@@ -10,7 +10,7 @@ A read-only Edge/Chrome extension: open a flow in the maker portal, click **Anal
 and get a grade, 30 rules' worth of findings based on Microsoft's guidance, and measurements
 from the flow's recent runs. No server, no app registration, nothing leaves your browser.
 
-![The analysis pane next to the designer, after reading recent runs](docs/images/pane-runs.png)
+![The analysis pane next to the designer, after reading recent runs](.github/images/pane-runs.png)
 
 - **Try it without installing:** paste a flow definition on the
   [project site](https://leduc212.github.io/cloud-flow-analyzer/).
@@ -104,13 +104,15 @@ Results are kept until you close the browser, and an edited flow is analysed aga
 If clicking an action doesn't move the designer, open **Designer check** at the bottom of the
 pane, copy it and send it to us.
 
-![All flows in an environment, worst grade first](docs/images/all-flows.png)
+![All flows in an environment, worst grade first](.github/images/all-flows.png)
 
 ## Capture tool
 
 For troubleshooting and for building new rules: the capture tool (extension icon → **Open
 capture tool**) collects API responses for chosen flows, runs the rules on them and downloads
-everything as one anonymised file. See [docs/CAPTURE.md](docs/CAPTURE.md).
+everything as one file. The file is anonymised by default (IDs, emails, URLs, names and literal
+values are replaced; action and column names are kept), but the anonymiser is best-effort: read
+the file before you share it.
 
 ## What's here
 
@@ -121,8 +123,6 @@ everything as one anonymised file. See [docs/CAPTURE.md](docs/CAPTURE.md).
 | `apps/web`           | Project site: paste-a-flow demo, rule docs, privacy policy (GitHub Pages)     |
 | `fixtures/flows`     | Sample flows used by the tests (a "before" and "after" flow, a solution flow) |
 | `scripts/analyse.ts` | Analyse a flow file or a capture file from the command line                   |
-| `docs/PLAN.md`       | Goals, rule catalogue, architecture, milestones                               |
-| `docs/STORE.md`      | Store listing text and permission justifications                              |
 
 ## Development
 
@@ -136,13 +136,12 @@ pnpm build && pnpm test:e2e   # browser tests: the built extension in Chromium
 pnpm --filter @cfa/extension dev    # rebuild the extension on change
 pnpm analyse fixtures/flows/sync-contacts-bad.json   # analyse a flow or capture file
 pnpm --filter @cfa/web dev          # the project site
-SCREENSHOTS=1 pnpm test:e2e screenshots   # refresh docs/images
+SCREENSHOTS=1 pnpm test:e2e screenshots   # refresh .github/images
 ```
 
 Releases: bump the version in `apps/extension/public/manifest.json`, add a `CHANGELOG.md`
 section, and push a `v<version>` tag; the Release workflow publishes the zip. The site deploys
-from `main` (Settings → Pages → Source: GitHub Actions). Store listing text:
-[docs/STORE.md](docs/STORE.md).
+from `main` (Settings → Pages → Source: GitHub Actions).
 
 ## Licence
 

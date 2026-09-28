@@ -9,6 +9,7 @@ import {
   designerCheck,
   expandPath,
   findActionElement,
+  findCollapseToggle,
   flowShape,
   isDesignerOpen,
   placeOfNode,
@@ -184,6 +185,40 @@ describe('expandPath', () => {
       ],
     );
     expect(outcome).toEqual({ expanded: ['case "Case 2"'] });
+  });
+
+  it('presses the branch card itself, not its disabled chevron', async () => {
+    // The designer's "False" card, as a user copied it from the page.
+    document.body.innerHTML = `
+      <div class="react-flow">
+        <div class="react-flow__node" data-id="Check-#scope"><button aria-label="Collapse Check" aria-expanded="true"></button></div>
+        <div class="react-flow__node" data-id="Check-elseActions-#subgraph">
+          <div tabindex="0" role="button" aria-label="False condition" aria-expanded="false">
+            <div tabindex="-1"></div><div>False</div>
+            <span aria-hidden="true"><button aria-label="Expand" aria-expanded="false" disabled tabindex="-1"></button></span>
+          </div>
+        </div>
+      </div>`;
+    const card = document.querySelector<HTMLElement>('[role="button"]')!;
+    card.addEventListener('click', () => {
+      card.setAttribute('aria-expanded', 'true');
+      const node = document.createElement('div');
+      node.className = 'react-flow__node';
+      node.dataset.id = 'Send_email';
+      document.querySelector('.react-flow')!.append(node);
+    });
+    const node = document.querySelector<HTMLElement>('[data-id="Check-elseActions-#subgraph"]')!;
+    expect(findCollapseToggle(node)).toBe(card);
+    expect(toggleState(card)).toBe('collapsed');
+
+    const outcome = await expandPath(
+      ['Check', 'Send_email'],
+      [
+        { name: 'Check', kind: 'condition' },
+        { name: 'Send_email', kind: 'connector', branch: 'else' },
+      ],
+    );
+    expect(outcome).toEqual({ expanded: ['the "No" branch of "Check"'] });
   });
 
   it('names branch cards the way the designer does', () => {

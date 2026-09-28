@@ -125,7 +125,12 @@ function offset(element: HTMLElement, container: HTMLElement, reservedRight: num
 
 type Mover = (pane: HTMLElement, dx: number, dy: number) => void;
 
-function pointer(x: number, y: number, buttons: number): PointerEventInit {
+function pointer(
+  x: number,
+  y: number,
+  buttons: number,
+  view: Window | null = window,
+): PointerEventInit {
   return {
     bubbles: true,
     cancelable: true,
@@ -136,7 +141,7 @@ function pointer(x: number, y: number, buttons: number): PointerEventInit {
     screenY: y,
     button: 0,
     buttons,
-    view: window,
+    view,
     pointerId: 1,
     pointerType: 'mouse',
     isPrimary: true,
@@ -262,11 +267,27 @@ const TOGGLE_SELECTORS = [
   '.msla-collapse-toggle',
   '[class*="collapse-toggle"]',
   'button[aria-expanded]',
+  // Branch cards: the whole card is the toggle; the chevron inside is a disabled icon.
+  '[role="button"][aria-expanded]',
   'button[aria-label*="expand" i]',
   'button[aria-label*="collapse" i]',
   'button[title*="expand" i]',
   'button[title*="collapse" i]',
 ];
+
+/**
+ * Whether pressing the element can do anything: not disabled, and not decoration hidden
+ * from assistive tech inside the card (the designer's branch chevrons are both).
+ */
+function usable(toggle: HTMLElement, card: HTMLElement): boolean {
+  if ((toggle as HTMLButtonElement).disabled || toggle.getAttribute('aria-disabled') === 'true') {
+    return false;
+  }
+  for (let el: HTMLElement | null = toggle; el && el !== card; el = el.parentElement) {
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+  }
+  return true;
+}
 
 /** The card that holds a container's expand/collapse button (scope header first). */
 function containerCard(name: string, documents = searchDocuments()): HTMLElement | undefined {
@@ -280,8 +301,9 @@ function containerCard(name: string, documents = searchDocuments()): HTMLElement
 
 export function findCollapseToggle(card: HTMLElement): HTMLElement | undefined {
   for (const selector of TOGGLE_SELECTORS) {
-    const toggle = card.querySelector<HTMLElement>(selector);
-    if (toggle) return toggle;
+    for (const toggle of card.querySelectorAll<HTMLElement>(selector)) {
+      if (usable(toggle, card)) return toggle;
+    }
   }
   return undefined;
 }
@@ -366,29 +388,132 @@ function branchLabel(parent: Step, child: Step): string {
 type OpenResult = 'shown' | 'opened' | 'already-open' | 'no-toggle' | 'failed' | 'undone';
 
 /** Opens one collapsible card if it says it's collapsed (or can't tell), and reports what happened. */
+/** What was under a toggle's centre when we pressed it, for the designer check. */
+function hitAt(toggle: HTMLElement): string {
+  const box = toggle.getBoundingClientRect();
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
+  if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return 'off-screen';
+  const doc = toggle.ownerDocument;
+  const hit = typeof doc.elementFromPoint === 'function' ? doc.elementFromPoint(x, y) : null;
+  if (!hit) return 'nothing';
+  if (hit === toggle) return 'toggle';
+  if (toggle.contains(hit)) return 'inside toggle';
+  return describe(hit);
+}
+
+function describe(el: Element): string {
+  const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] : '';
+  const id = el.id ? `#${el.id}` : '';
+  const dataId = el instanceof HTMLElement && el.dataset.id ? `[data-id=${el.dataset.id}]` : '';
+  return `${el.tagName.toLowerCase()}${id}${cls ? `.${cls}` : ''}${dataId}`.slice(0, 120);
+}
+
+/**
+ * Presses an element the way a mouse does: pointer and mouse down and up, then click, at its
+ * centre. A bare element.click() skips the down/up events, which some designer buttons act on.
+ */
+function press(el: HTMLElement): void {
+  const box = el.getBoundingClientRect();
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
+  const view = null; // Handlers don't read it, and test DOMs reject their own window here.
+  const Pointer = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+  el.dispatchEvent(new Pointer('pointerover', pointer(x, y, 0, view)));
+  el.dispatchEvent(new MouseEvent('mouseover', pointer(x, y, 0, view)));
+  el.dispatchEvent(new Pointer('pointerdown', pointer(x, y, 1, view)));
+  el.dispatchEvent(new MouseEvent('mousedown', pointer(x, y, 1, view)));
+  el.focus({ preventScroll: true });
+  el.dispatchEvent(new Pointer('pointerup', pointer(x, y, 0, view)));
+  el.dispatchEvent(new MouseEvent('mouseup', pointer(x, y, 0, view)));
+  el.dispatchEvent(new MouseEvent('click', { ...pointer(x, y, 0, view), detail: 1 }));
+}
+
+/** Presses Enter on a focused element, for toggles that only listen to the keyboard. */
+function pressEnter(el: HTMLElement): void {
+  el.focus({ preventScroll: true });
+  const key = { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true };
+  el.dispatchEvent(new KeyboardEvent('keydown', key));
+  el.dispatchEvent(new KeyboardEvent('keyup', key));
+}
+
+export interface ToggleAttempt {
+  node: string;
+  label: string | null;
+  /** What was under the toggle's centre: `toggle` when nothing covered it (events go to it either way). */
+  hit: string;
+  /** How it was pressed, and the toggle's state after each try. */
+  tries: { how: 'press' | 'enter'; after: string }[];
+  /** The card's structure (tags, roles, aria and data attributes), when it didn't open. */
+  structure?: string;
+}
+
+/** The last toggles we pressed, newest last, shown in the designer check. */
+const toggleAttempts: ToggleAttempt[] = [];
+
+/** The card's element tree without text: enough to see where its buttons and handlers sit. */
+function structureOf(el: Element, depth = 0): string {
+  if (depth > 5) return '';
+  const attrs = [...el.attributes]
+    .filter((a) => /^(role|aria-|data-|tabindex|type|disabled)/.test(a.name))
+    .map((a) => `${a.name}="${a.value.slice(0, 60)}"`);
+  const head = [describe(el), ...attrs].join(' ');
+  const children = [...el.children].map((c) => structureOf(c, depth + 1)).filter(Boolean);
+  const pad = '  '.repeat(depth);
+  return [pad + head, ...children].join('\n');
+}
+
+/** Opens one collapsible card if it says it's collapsed (or can't tell), and reports what happened. */
 async function open(card: () => HTMLElement | undefined, child: string): Promise<OpenResult> {
   const found = card();
   const toggle = found && findCollapseToggle(found);
   if (!toggle) return 'no-toggle';
   const state = toggleState(toggle);
   if (state === 'expanded') return 'already-open';
-  toggle.click();
+  const attempt: ToggleAttempt = {
+    node: found.dataset.id ?? describe(found),
+    label: toggle.getAttribute('aria-label'),
+    hit: hitAt(toggle),
+    tries: [],
+  };
+  toggleAttempts.push(attempt);
+  if (toggleAttempts.length > 5) toggleAttempts.shift();
+
   // Done when the next step is drawn, or when the toggle now says open (the next step may
   // just be off-screen, which the canvas search handles).
-  const result = await waitFor(() => {
+  const opened = () => {
     if (findActionElement(child)) return 'shown' as const;
     const again = card();
     const now = again && findCollapseToggle(again);
     return state === 'collapsed' && now && toggleState(now) === 'expanded'
       ? ('opened' as const)
       : undefined;
-  });
-  if (result) return result;
+  };
+  const current = () => {
+    const now = findCollapseToggle(card() ?? toggle) ?? toggle;
+    return now.isConnected ? toggleState(now) : 'gone';
+  };
+  // Try the keyboard only for a toggle that says it's collapsed: an unlabelled one might be
+  // open, and pressing it twice would close it.
+  const ways = state === 'collapsed' ? (['press', 'enter'] as const) : (['press'] as const);
+  for (const how of ways) {
+    const now = findCollapseToggle(card() ?? toggle) ?? toggle;
+    if (how === 'press') press(now);
+    else pressEnter(now);
+    const result = await waitFor(opened, 1500);
+    attempt.tries.push({ how, after: result ?? current() });
+    if (result) return result;
+    // Stop if the toggle changed in some other way, rather than pressing it again.
+    if (state === 'collapsed' && current() !== 'collapsed') break;
+  }
   if (state === 'unknown') {
     // We may have collapsed an open container: put it back.
-    findCollapseToggle(card() ?? toggle)?.click();
+    const now = findCollapseToggle(card() ?? toggle);
+    if (now) press(now);
     return 'undone';
   }
+  const shown = card();
+  if (shown) attempt.structure = structureOf(shown);
   return 'failed';
 }
 
@@ -862,6 +987,7 @@ export function designerCheck(documents: Document[] = searchDocuments()): Record
       })
       .filter(Boolean)
       .slice(0, 15),
+    toggleAttempts,
     frames: [...document.querySelectorAll('iframe')].map((f) => ({
       host: f.src ? new URL(f.src, location.href).host : '',
       sameOrigin: canRead(f),

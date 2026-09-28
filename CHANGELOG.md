@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2 (2026-09-28)
+
+- Collapsed Condition branches now open on the way to an action. The designer's branch card is
+  itself the toggle; the chevron inside it is a disabled icon, which is what was being clicked.
+  Toggles are also pressed the way a mouse does (down, up, then click), then with Enter.
+- When a toggle still won't open, the designer check lists what was tried and how the card is
+  built, to help find out why.
+
 ## 1.0.1 (2026-09-28)
 
 - Jumping to an action now walks the flow's structure: it finds actions deep inside nested

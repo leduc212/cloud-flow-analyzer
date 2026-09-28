@@ -88,13 +88,18 @@ export function plainPage(text: string, token: string): string {
  * Condition branches and Switch cases sit side by side under the header, each with a
  * "<branch>-#subgraph" card (and a "<branch>" box when open); only nodes that overlap the
  * visible canvas are drawn. `collapsed` lists containers and branches (e.g.
- * "Condition-elseActions") that start collapsed; clicking a toggle in `stuck` does nothing.
+ * "Condition-elseActions") that start collapsed.
  */
 export function flowDesignerPage(
   definition: { triggers: Record<string, unknown>; actions: Record<string, unknown> },
   collapsed: string[],
   token: string,
-  stuck: string[] = [],
+  options: {
+    /** Toggles that do nothing when pressed. */
+    stuck?: string[];
+    /** The event toggles act on: a bare element.click() only sends `click`. */
+    toggleOn?: 'click' | 'pointerdown';
+  } = {},
 ): string {
   return `<!doctype html><html><head><style>
 body{margin:0;font-family:sans-serif} .top{height:48px;background:#0f6cbd;color:#fff;padding:12px;box-sizing:border-box}
@@ -110,7 +115,8 @@ body{margin:0;font-family:sans-serif} .top{height:48px;background:#0f6cbd;color:
 <script>
   const flow = ${JSON.stringify(definition)};
   const collapsed = new Set(${JSON.stringify(collapsed)});
-  const stuck = new Set(${JSON.stringify(stuck)});
+  const stuck = new Set(${JSON.stringify(options.stuck ?? [])});
+  const toggleOn = ${JSON.stringify(options.toggleOn ?? 'click')};
   const W = 240, H = 44, GAP = 50, CARD_W = 120, CARD_H = 32, PAD = 30, BGAP = 60;
   const vp = document.querySelector('.react-flow__viewport');
   const canvas = document.querySelector('.react-flow');
@@ -210,12 +216,12 @@ body{margin:0;font-family:sans-serif} .top{height:48px;background:#0f6cbd;color:
         t.setAttribute('aria-expanded', String(!shut));
         t.setAttribute('aria-label', (shut ? 'Expand' : 'Collapse') + (n.card ? '' : ' ' + n.text.replace(/_/g, ' ')));
         t.textContent = shut ? '+' : '-';
-        t.onclick = () => {
+        t.addEventListener(toggleOn, () => {
           window.toggleClicks++;
           if (stuck.has(n.toggle)) return;
           if (shut) collapsed.delete(n.toggle); else collapsed.add(n.toggle);
           setTimeout(render, 100);
-        };
+        });
         el.append(t);
       }
       if (n.text) el.append(n.text.replace(/_/g, ' '));

@@ -142,8 +142,11 @@ test('walks nested branches to actions far away and in a collapsed "No" branch',
   analyse,
 }) => {
   await mockApi({ [`/flows/${FLOW}`]: poFlow });
+  // Toggles that act on pointerdown, not on a bare click event.
   const portal = await openPortal(
-    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN),
+    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN, {
+      toggleOn: 'pointerdown',
+    }),
   );
   await analyse(portal);
   await expect(portal.locator('#cfa-pane-host .finding').first()).toBeVisible({ timeout: 15_000 });
@@ -184,7 +187,7 @@ test('stops at a branch that will not open and points at it', async ({
   const ELSE = 'Condition_-_If_classified_as_PO-elseActions';
   await mockApi({ [`/flows/${FLOW}`]: poFlow });
   const portal = await openPortal(
-    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN, [ELSE]),
+    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN, { stuck: [ELSE] }),
   );
   await analyse(portal);
   await expect(portal.locator('#cfa-pane-host .finding').first()).toBeVisible({ timeout: 15_000 });
@@ -200,6 +203,22 @@ test('stops at a branch that will not open and points at it', async ({
   expect(
     await portal.evaluate(() => (window as unknown as { toggleClicks: number }).toggleClicks),
   ).toBe(1);
+
+  // The designer check says what was tried on the toggle and how the card is built.
+  await portal.locator('#cfa-pane-host summary', { hasText: 'Designer check' }).click();
+  await portal.locator('#cfa-pane-host button', { hasText: 'Copy designer check' }).click();
+  const check = JSON.parse(await paneText(portal, 'footer details pre'));
+  expect(check.toggleAttempts.at(-1)).toMatchObject({
+    node: `${ELSE}-#subgraph`,
+    label: 'Expand',
+    // The card was pressed as it came into view, under the pane.
+    hit: 'div#cfa-pane-host',
+    tries: [
+      { how: 'press', after: 'collapsed' },
+      { how: 'enter', after: 'collapsed' },
+    ],
+  });
+  expect(check.toggleAttempts.at(-1).structure).toContain('aria-expanded="false"');
 });
 
 test('dismisses findings, rescoring and remembering them, and copies a report', async ({

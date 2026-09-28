@@ -20,10 +20,12 @@ from the flow's recent runs. No server, no app registration, nothing leaves your
 
 ## Install
 
-1. Download `cloud-flow-analyzer-v….zip` from the latest
-   [release](https://github.com/leduc212/cloud-flow-analyzer/releases) and unzip it.
+1. Download `cloud-flow-analyzer-v….zip` from the **Assets** of the latest
+   [release](https://github.com/leduc212/cloud-flow-analyzer/releases) and unzip it. (Not
+   "Source code (zip)": that's the repository, which has no `manifest.json` at the top and
+   can't be loaded as it is.)
 2. Open `edge://extensions` (or `chrome://extensions`), turn on **Developer mode**, click
-   **Load unpacked** and pick the unzipped folder.
+   **Load unpacked** and pick the unzipped folder, the one with `manifest.json` in it.
 3. Open [make.powerautomate.com](https://make.powerautomate.com) and sign in (or refresh the tab
    if it was already open) so the extension picks up your sign-in.
 

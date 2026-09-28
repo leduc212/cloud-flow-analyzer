@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { resolve } from 'node:path';
-import { designerPage, plainPage, type DesignerItem } from './designer.ts';
+import { designerPage, flowDesignerPage, plainPage, type DesignerItem } from './designer.ts';
 import {
   ENV,
   FLOW,
@@ -12,6 +12,7 @@ import {
   paneText,
   test,
 } from './fixtures.ts';
+import { FAR_DOWN_YES, IN_NO_BRANCH, NO_LOOP, poCollapsed, poFlow } from './po-flow.ts';
 
 const bad = JSON.parse(
   readFileSync(
@@ -133,6 +134,72 @@ test('finds an undrawn action in collapsed containers and opens only what is nee
   expect(
     await portal.evaluate(() => (window as unknown as { toggleClicks: number }).toggleClicks),
   ).toBe(2);
+});
+
+test('walks nested branches to actions far away and in a collapsed "No" branch', async ({
+  openPortal,
+  mockApi,
+  analyse,
+}) => {
+  await mockApi({ [`/flows/${FLOW}`]: poFlow });
+  const portal = await openPortal(
+    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN),
+  );
+  await analyse(portal);
+  await expect(portal.locator('#cfa-pane-host .finding').first()).toBeVisible({ timeout: 15_000 });
+  const clicks = () =>
+    portal.evaluate(() => (window as unknown as { toggleClicks: number }).toggleClicks);
+
+  // From the top of the flow into the collapsed "No" branch, far down the canvas.
+  await portal
+    .locator('#cfa-pane-host .target', { hasText: 'Apply to each - Email attachment' })
+    .first()
+    .click();
+  expect(await settled(portal)).toBe(
+    'Showing "Apply to each - Email attachment" (opened the "No" branch of "Condition - If classified as PO").',
+  );
+  expect(await nodeCentre(portal, NO_LOOP)).toEqual(VISIBLE_CENTRE);
+  expect(await clicks()).toBe(1);
+
+  // Across to the "Yes" branch, below everything drawn so far.
+  await portal.locator('#cfa-pane-host .target', { hasText: 'Create PO line' }).first().click();
+  expect(await settled(portal)).toBe('Showing "Create PO line".');
+  expect(await nodeCentre(portal, FAR_DOWN_YES)).toEqual(VISIBLE_CENTRE);
+
+  // And back into the loop in the "No" branch, now open. Nothing else gets clicked.
+  await portal
+    .locator('#cfa-pane-host .target', { hasText: 'Create Non-PO record' })
+    .first()
+    .click();
+  expect(await settled(portal)).toBe('Showing "Create Non-PO record".');
+  expect(await nodeCentre(portal, IN_NO_BRANCH)).toEqual(VISIBLE_CENTRE);
+  expect(await clicks()).toBe(1);
+});
+
+test('stops at a branch that will not open and points at it', async ({
+  openPortal,
+  mockApi,
+  analyse,
+}) => {
+  const ELSE = 'Condition_-_If_classified_as_PO-elseActions';
+  await mockApi({ [`/flows/${FLOW}`]: poFlow });
+  const portal = await openPortal(
+    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN, [ELSE]),
+  );
+  await analyse(portal);
+  await expect(portal.locator('#cfa-pane-host .finding').first()).toBeVisible({ timeout: 15_000 });
+
+  await portal
+    .locator('#cfa-pane-host .target', { hasText: 'Apply to each - Email attachment' })
+    .first()
+    .click();
+  expect(await settled(portal)).toBe(
+    '"Apply to each - Email attachment" is inside the "No" branch of "Condition - If classified as PO", which didn\'t open when clicked. Expand it by hand (it\'s highlighted), then click again.',
+  );
+  expect(await nodeCentre(portal, `${ELSE}-#subgraph`)).toEqual(VISIBLE_CENTRE);
+  expect(
+    await portal.evaluate(() => (window as unknown as { toggleClicks: number }).toggleClicks),
+  ).toBe(1);
 });
 
 test('dismisses findings, rescoring and remembering them, and copies a report', async ({

@@ -729,6 +729,7 @@ export class Pane {
       const outcome = await revealAction(name, item.target.path, {
         reservedRight: this.panel.hidden ? 0 : PANE_WIDTH,
         order: this.result?.order ?? [],
+        parents: this.result?.parents ?? {},
         steps: item.steps,
         onProgress: (text) => this.setToast(text),
       });

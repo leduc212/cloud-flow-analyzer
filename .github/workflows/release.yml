@@ -46,12 +46,23 @@ jobs:
           echo "TAG=$tag" >> "$GITHUB_ENV"
       - run: pnpm check
       - name: Zip the extension
-        run: cd apps/extension/dist && zip -r "$GITHUB_WORKSPACE/cloud-flow-analyzer-$TAG.zip" .
+        run: |
+          (cd apps/extension/dist && zip -r "$GITHUB_WORKSPACE/cloud-flow-analyzer-$TAG.zip" .)
+          # Load unpacked needs manifest.json at the top of the unzipped folder.
+          unzip -Z1 "cloud-flow-analyzer-$TAG.zip" | grep -qx manifest.json
       - name: Release notes from CHANGELOG.md
         run: |
           awk -v v="${TAG#v}" '$0 ~ "^## " v " " {f=1; next} /^## / && f {exit} f' \
-            CHANGELOG.md > notes.md
-          if [ ! -s notes.md ]; then echo "No CHANGELOG.md section for $TAG"; exit 1; fi
+            CHANGELOG.md > changes.md
+          if [ ! -s changes.md ]; then echo "No CHANGELOG.md section for $TAG"; exit 1; fi
+          {
+            echo "**Install:** download **cloud-flow-analyzer-$TAG.zip** under Assets below (not"
+            echo "\"Source code\", which is the repository and can't be loaded). Unzip it, open"
+            echo "\`edge://extensions\` or \`chrome://extensions\`, turn on Developer mode, click"
+            echo "**Load unpacked** and pick the unzipped folder, the one with \`manifest.json\` in it."
+            echo
+            cat changes.md
+          } > notes.md
       # --target only applies when the tag doesn't exist yet (a run from the Actions tab).
       - name: Publish the release
         env:

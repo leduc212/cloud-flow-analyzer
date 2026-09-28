@@ -18,6 +18,8 @@ export interface RevealOptions {
   reservedRight?: number;
   /** Trigger and action names in designer order, used to find actions that aren't drawn yet. */
   order?: string[];
+  /** The parent and branch of each nested action, to walk the designer's layout. */
+  parents?: Parents;
   /** Kinds and branches along the path, to open Condition branches and Switch cases. */
   steps?: Step[];
   /** Status updates while searching. */
@@ -313,6 +315,8 @@ export interface ExpandOutcome {
   expanded: string[];
   /** The container that couldn't be opened, when the action is still hidden. */
   blockedAt?: string;
+  /** A container whose toggle was clicked but didn't open it, and its node on the canvas. */
+  failed?: { label: string; nodeId?: string };
 }
 
 /**
@@ -358,7 +362,8 @@ function branchLabel(parent: Step, child: Step): string {
   return `case "${label(branch.replace(/^case:/, ''))}"`;
 }
 
-type OpenResult = 'shown' | 'opened' | 'already-open' | 'no-toggle' | 'failed';
+/** `failed`: said collapsed and stayed so. `undone`: couldn't tell, clicked, and put it back. */
+type OpenResult = 'shown' | 'opened' | 'already-open' | 'no-toggle' | 'failed' | 'undone';
 
 /** Opens one collapsible card if it says it's collapsed (or can't tell), and reports what happened. */
 async function open(card: () => HTMLElement | undefined, child: string): Promise<OpenResult> {
@@ -382,6 +387,7 @@ async function open(card: () => HTMLElement | undefined, child: string): Promise
   if (state === 'unknown') {
     // We may have collapsed an open container: put it back.
     findCollapseToggle(card() ?? toggle)?.click();
+    return 'undone';
   }
   return 'failed';
 }
@@ -413,7 +419,15 @@ export async function expandPath(path: string[], steps: Step[] = []): Promise<Ex
       const result = await open(container.card, child);
       if (result === 'shown' || result === 'opened') expanded.push(container.label);
       if (result === 'opened') return { expanded };
-      if (result === 'failed') return { expanded, blockedAt: parent };
+      if (result === 'undone') return { expanded, blockedAt: parent };
+      if (result === 'failed') {
+        const nodeId = container.card()?.dataset.id;
+        return {
+          expanded,
+          blockedAt: parent,
+          failed: { label: container.label, ...(nodeId ? { nodeId } : {}) },
+        };
+      }
       if (result === 'shown') {
         shown = true;
         break;
@@ -447,78 +461,250 @@ const settle = async () => {
   await new Promise((resolve) => setTimeout(resolve, 150));
 };
 
-/** Where to look next when the nearest drawn action stops changing: ahead, right, left, ahead. */
-const LOOK: [number, number][] = [
-  [0, 0.6],
-  [0.6, 0],
-  [-1.2, 0],
-  [0.6, 0.6],
-];
+/** Where each nested action sits: its parent and the branch of the parent that holds it. */
+export type Parents = Record<string, { parent: string; branch: string }>;
+
+/** The flow's structure, to tell where a drawn node sits relative to the action we want. */
+export interface FlowShape {
+  /** Trigger and action names in designer order. */
+  index: Map<string, number>;
+  parents: Parents;
+  /** Switch case name → its Switch, for case cards whose ID is just the case name. */
+  cases: Map<string, string>;
+}
+
+export function flowShape(order: string[], parents: Parents = {}): FlowShape {
+  const cases = new Map<string, string>();
+  for (const { parent, branch } of Object.values(parents)) {
+    if (branch.startsWith('case:')) cases.set(branch.slice(5), parent);
+  }
+  return { index: new Map(order.map((name, i) => [name, i])), parents, cases };
+}
+
+/** What a drawn node stands for: an action, or a branch of a Condition or Switch (its card or area). */
+export type Place = { action: string } | { parent: string; branch: string };
+
+export function placeOfNode(id: string, shape: FlowShape): Place | undefined {
+  const base = actionNameOfNode(id);
+  if (shape.index.has(base)) return { action: base };
+  const branch = /^(.*)-(actions|elseActions|defaultCase)$/.exec(base);
+  if (branch?.[1] && shape.index.has(branch[1])) {
+    const kind = { actions: 'actions', elseActions: 'else', defaultCase: 'default' }[
+      branch[2] as 'actions' | 'elseActions' | 'defaultCase'
+    ];
+    return { parent: branch[1], branch: kind };
+  }
+  const caseOf = shape.cases.get(base);
+  return caseOf ? { parent: caseOf, branch: `case:${base}` } : undefined;
+}
+
+/** The action's ancestors, outermost first, ending with the action itself. */
+function lineage(name: string, parents: Parents): string[] {
+  const chain = [name];
+  for (let up = parents[name]; up && chain.length < 100; up = parents[up.parent]) {
+    chain.unshift(up.parent);
+  }
+  return chain;
+}
 
 /**
- * The designer only draws actions near the visible part of the canvas, so an action far away
- * isn't on the page at all. Walk towards it: centre on the drawn action closest to it in flow
- * order, look a bit further (ahead, then to the sides for branches), open collapsed parents as
- * they appear, and repeat until the action is drawn.
+ * Which action in the list holding `path[level]` (same parent, same branch) contains a drawn
+ * node: that action's name, `'top'` for the branch's own card, or undefined when the node is
+ * outside that list (another branch, or elsewhere in the flow).
+ */
+export function siblingAt(
+  place: Place,
+  path: string[],
+  level: number,
+  shape: FlowShape,
+): string | undefined {
+  const parent = level > 0 ? path[level - 1] : undefined;
+  const branch = shape.parents[path[level] ?? '']?.branch;
+  if ('branch' in place && place.parent === parent && place.branch === branch) return 'top';
+  const chain = lineage('action' in place ? place.action : place.parent, shape.parents);
+  if (parent === undefined) return chain[0];
+  const at = chain.indexOf(parent);
+  const child = at >= 0 ? chain[at + 1] : undefined;
+  return child && shape.parents[child]?.branch === branch ? child : undefined;
+}
+
+interface Drawn {
+  el: HTMLElement;
+  place: Place;
+}
+
+/** Where the walk is: the deepest action on the path whose part of the canvas is drawn. */
+function depthReached(drawn: Drawn[], path: string[], shape: FlowShape): number {
+  for (let level = path.length - 1; level >= 0; level--) {
+    if (drawn.some((d) => siblingAt(d.place, path, level, shape) === path[level])) return level;
+  }
+  return -1;
+}
+
+/**
+ * The designer only draws what is near the visible part of the canvas, so an action far away
+ * isn't on the page at all. Walk down the action's path instead of guessing: at each level,
+ * find the drawn action in the same list (same parent and branch) that is closest to the next
+ * step and jump past it, towards the step (lists run top to bottom; scopes, loops and
+ * conditions are drawn as boxes, so one jump clears a whole container). When nothing in that
+ * list is drawn, go to the list's start: the parent's header, or for a Condition or Switch the
+ * branch's card, sweeping sideways from the header to find it (branches sit side by side).
+ * Collapsed parents and branches are opened as they come into view.
  */
 async function searchCanvas(
   name: string,
   path: string[],
   steps: Step[],
-  order: string[],
+  shape: FlowShape,
   reservedRight: number,
-  expanded: string[],
+  opened: Pick<ExpandOutcome, 'expanded' | 'failed'>,
 ): Promise<HTMLElement | undefined> {
   const tryFind = async () => {
     const found = findActionElement(name);
     if (found) return found;
     const outcome = await expandPath(path, steps);
-    for (const e of outcome.expanded) if (!expanded.includes(e)) expanded.push(e);
+    for (const e of outcome.expanded) if (!opened.expanded.includes(e)) opened.expanded.push(e);
+    if (outcome.failed) opened.failed = outcome.failed;
     return findActionElement(name);
   };
-  const target = order.indexOf(name);
   let found = await tryFind();
-  if (found || target < 0) return found;
+  // A toggle that doesn't open its container won't open on the next try either: stop there.
+  if (found || opened.failed) return found;
 
-  let lastBest = '';
-  let stuck = 0;
+  let best = { level: -2, distance: Infinity };
+  let stale = 0;
+  let sweep = { parent: '', direction: 1, turned: false };
+  // Moved onto empty canvas: go back, then try again shifted sideways by these parts of a view.
+  const NUDGES = [0.6, -0.6, 1.2, -1.2];
+  let nudge = 0;
   let lastMove: { pane: HTMLElement; dx: number; dy: number } | undefined;
-  for (let step = 0; step < 40 && stuck < 8; step++) {
+  for (let move = 0; move < 60 && stale < 10; move++) {
     const drawn = renderedNodes()
-      .map((el) => ({ el, index: order.indexOf(actionNameOfNode(el.dataset.id ?? '')) }))
-      .filter((n) => n.index >= 0);
-    if (drawn.length === 0 && lastMove) {
-      // Panned into empty canvas: go back and look in the next direction instead.
+      .map((el) => ({ el, place: placeOfNode(el.dataset.id ?? '', shape) }))
+      .filter((d): d is Drawn => d.place !== undefined);
+    if (drawn.length === 0) {
+      if (!lastMove || nudge >= NUDGES.length) return undefined;
       drag(lastMove.pane, -lastMove.dx, -lastMove.dy);
       lastMove = undefined;
+      nudge += 1;
       await settle();
       continue;
     }
-    const best = drawn.reduce<(typeof drawn)[number] | undefined>(
-      (a, b) => (!a || Math.abs(b.index - target) < Math.abs(a.index - target) ? b : a),
-      undefined,
-    );
-    const canvas = best && canvasOf(best.el);
-    if (!best || !canvas) return undefined;
-    const id = best.el.dataset.id ?? '';
-    if (id !== lastBest) {
-      lastBest = id;
-      stuck = 0;
-      await centreWith(drag, () => nodeById(id), reservedRight);
+    const canvas = canvasOf(drawn[0]!.el);
+    if (!canvas) return undefined;
+    const area = visibleArea(canvas.container, reservedRight);
+
+    const reached = depthReached(drawn, path, shape);
+    const level = reached + 1;
+    const step = path[level];
+    let distance = Infinity;
+    let dx = 0;
+    let dy: number;
+    if (step === undefined) {
+      // The action's area is drawn but not the action itself: its header is further up.
+      dy = area.height * 0.5;
     } else {
-      stuck += 1;
+      const target = shape.index.get(step) ?? 0;
+      const near = nearestSibling(drawn, path, level, shape, target);
+      if (near && near.name !== 'top') {
+        distance = Math.abs((shape.index.get(near.name) ?? 0) - target);
+        const box = (findActionElement(near.name) ?? near.el).getBoundingClientRect();
+        dx = area.x - (box.left + box.width / 2);
+        if ((shape.index.get(near.name) ?? 0) < target) {
+          // It's above the step: bring its bottom edge to the top of the view.
+          dy = Math.min(area.top + area.height * 0.15 - box.bottom, -area.height * 0.5);
+        } else {
+          dy = Math.max(area.bottom - area.height * 0.15 - box.top, area.height * 0.5);
+        }
+      } else {
+        const parent = path[level - 1];
+        const parentStep = steps[level - 1];
+        const childStep = steps[level];
+        const card =
+          near?.el ??
+          (parentStep && childStep
+            ? branchCardIds(parentStep, childStep)
+                .map(nodeById)
+                .find((el) => el !== undefined)
+            : undefined);
+        const branched = parentStep?.kind === 'condition' || parentStep?.kind === 'switch';
+        const anchor = card ?? (parent !== undefined ? findActionElement(parent) : undefined);
+        if (!anchor) return undefined;
+        const box = anchor.getBoundingClientRect();
+        // Aim at the top of the anchor: a header or branch card, not the middle of a tall box.
+        dx = area.x - (box.left + box.width / 2);
+        dy = area.top + area.height * 0.3 - box.top;
+        const settled = Math.abs(dx) < 24 && Math.abs(dy) < 24;
+        if (!card && branched && (settled || sweep.parent === parent)) {
+          // At the Condition or Switch header and the branch card isn't drawn: branches sit
+          // side by side under the header, so move along that row, right first, then left.
+          if (sweep.parent !== parent)
+            sweep = { parent: parent ?? '', direction: 1, turned: false };
+          const edge = sweep.direction > 0 ? box.right - area.right : area.left - box.left;
+          if (edge <= 0) {
+            if (sweep.turned) return undefined;
+            sweep = { ...sweep, direction: -sweep.direction, turned: true };
+          }
+          dx = -sweep.direction * (area.right - area.left) * 0.6;
+        } else if (settled) {
+          // At the start of the list and still nothing drawn: its actions are further down.
+          dx = 0;
+          dy = -area.height * 0.4;
+        }
+      }
     }
-    const area = canvas.container.getBoundingClientRect();
-    const ahead = best.index < target ? 1 : -1;
-    const [lookX, lookY] = LOOK[stuck % LOOK.length] ?? [0, 0.6];
-    // Dragging moves the content: to look further down, drag the canvas up.
-    lastMove = { pane: canvas.pane, dx: -lookX * area.width, dy: -lookY * ahead * area.height };
-    drag(lastMove.pane, lastMove.dx, lastMove.dy);
+
+    if (level > best.level || (level === best.level && distance < best.distance)) {
+      best = { level, distance };
+      stale = 0;
+      nudge = 0;
+    } else {
+      stale += 1;
+    }
+    if (nudge > 0) dx += (NUDGES[nudge - 1] ?? 0) * (area.right - area.left);
+    lastMove = { pane: canvas.pane, dx, dy };
+    drag(canvas.pane, dx, dy);
     await settle();
     found = await tryFind();
-    if (found) return found;
+    if (found || opened.failed) return found;
   }
   return undefined;
+}
+
+/** The part of the canvas not covered by the pane, and its middle. */
+function visibleArea(container: HTMLElement, reservedRight: number) {
+  const box = container.getBoundingClientRect();
+  const right = Math.max(Math.min(box.right, window.innerWidth - reservedRight), box.left + 100);
+  return {
+    left: box.left,
+    right,
+    top: box.top,
+    bottom: box.bottom,
+    height: box.height,
+    x: (box.left + right) / 2,
+  };
+}
+
+/** The drawn action in the step's list closest to the step, or the list's card when only that is drawn. */
+function nearestSibling(
+  drawn: Drawn[],
+  path: string[],
+  level: number,
+  shape: FlowShape,
+  target: number,
+): { name: string; el: HTMLElement } | undefined {
+  let near: { name: string; el: HTMLElement; distance: number } | undefined;
+  for (const d of drawn) {
+    const name = siblingAt(d.place, path, level, shape);
+    if (!name) continue;
+    const distance = name === 'top' ? Infinity : Math.abs((shape.index.get(name) ?? 0) - target);
+    // Prefer the card itself over the branch's area when only the top of the branch is drawn.
+    const isCard = d.el.dataset.id?.endsWith('-#subgraph') ?? false;
+    if (!near || distance < near.distance || (distance === near.distance && isCard)) {
+      near = { name, el: d.el, distance };
+    }
+  }
+  return near;
 }
 
 /**
@@ -533,7 +719,7 @@ export async function revealAction(
   const reservedRight = options.reservedRight ?? 0;
   const find = () => findActionElement(name);
   let element = find();
-  let expanded: string[] = [];
+  let opened: Pick<ExpandOutcome, 'expanded' | 'failed'> = { expanded: [] };
   if (!element) {
     if (!isDesignerOpen()) {
       return { ok: false, message: 'Open the flow in the designer (Edit) to jump to actions.' };
@@ -545,22 +731,53 @@ export async function revealAction(
         name,
         walk,
         options.steps ?? [],
-        options.order,
+        flowShape(options.order, options.parents),
         reservedRight,
-        expanded,
+        opened,
       );
     } else {
       // No canvas to walk (classic designer): open collapsed parents on the page.
-      expanded = (await expandPath(walk, options.steps)).expanded;
+      opened = await expandPath(walk, options.steps);
       element = find();
     }
+    const failedId = opened.failed?.nodeId;
+    if (!element && opened.failed && failedId && nodeById(failedId)) {
+      await centreWith(drag, () => nodeById(failedId), reservedRight);
+      const shown = nodeById(failedId);
+      if (shown) highlight(shown);
+      return {
+        ok: false,
+        message: `"${label(name)}" is inside ${opened.failed.label}, which didn't open when clicked. Expand it by hand (it's highlighted), then click again.`,
+      };
+    }
     if (!element) {
+      const steps = options.steps ?? [];
+      const parentStep = steps[path.length - 2];
+      const ownStep = steps[path.length - 1];
+      const branched = parentStep?.kind === 'condition' || parentStep?.kind === 'switch';
+      const card =
+        parentStep && ownStep
+          ? branchCardIds(parentStep, ownStep)
+              .map(nodeById)
+              .find((el) => el !== undefined)
+          : undefined;
       const parent = [...path.slice(0, -1)].reverse().find((p) => findActionElement(p));
-      if (parent && findActionElement(parent)) {
-        await revealAction(parent, [], options);
+      if (card || parent) {
+        if (card) {
+          const id = card.dataset.id ?? '';
+          await centreWith(drag, () => nodeById(id), reservedRight);
+          const shown = nodeById(id);
+          if (shown) highlight(shown);
+        } else if (parent) {
+          await revealAction(parent, [], options);
+        }
+        const where =
+          parentStep && ownStep && branched
+            ? branchLabel(parentStep, ownStep)
+            : `"${label(path[path.length - 2] ?? parent ?? '')}"`;
         return {
           ok: false,
-          message: `"${label(name)}" is inside "${label(parent)}", which couldn't be opened automatically. Expand it (or the branch the action is in), then click again.`,
+          message: `"${label(name)}" is inside ${where}, which couldn't be opened automatically. Expand it (and any collapsed step inside it that holds the action), then click again.`,
         };
       }
       return {
@@ -590,8 +807,8 @@ export async function revealAction(
       message: `Found "${label(name)}" but couldn't move the canvas to it. Copy the designer check below and send it to us.`,
     };
   }
-  const opened = expanded.length ? ` (opened ${expanded.join(' › ')})` : '';
-  return { ok: true, message: `Showing "${label(name)}"${opened}.` };
+  const list = opened.expanded.length ? ` (opened ${opened.expanded.join(' › ')})` : '';
+  return { ok: true, message: `Showing "${label(name)}"${list}.` };
 }
 
 function canRead(frame: HTMLIFrameElement): boolean {

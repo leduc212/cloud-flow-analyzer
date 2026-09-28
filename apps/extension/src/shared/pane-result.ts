@@ -116,6 +116,8 @@ export interface PaneResult {
   findings: PaneFinding[];
   /** Trigger and action names in designer order (top to bottom), to find actions off-screen. */
   order: string[];
+  /** The parent and branch of each nested action, to walk the designer's layout. */
+  parents: Record<string, { parent: string; branch: string }>;
   warnings: string[];
   analysedAt: string;
   runs?: PaneRuns;
@@ -254,6 +256,11 @@ export function buildPaneResult(
       };
     }),
     order: [...tree.triggers.map((t) => t.name), ...tree.all.map((n) => n.name)],
+    parents: Object.fromEntries(
+      tree.all.flatMap((n) =>
+        n.parentName ? [[n.name, { parent: n.parentName, branch: n.branch ?? 'actions' }]] : [],
+      ),
+    ),
     warnings,
     analysedAt: now.toISOString(),
     ...(paneRuns ? { runs: paneRuns } : {}),

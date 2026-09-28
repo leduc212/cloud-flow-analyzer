@@ -9,8 +9,11 @@ import {
   designerCheck,
   expandPath,
   findActionElement,
+  flowShape,
   isDesignerOpen,
+  placeOfNode,
   revealAction,
+  siblingAt,
   toggleState,
 } from '../src/content/reveal.ts';
 import { buildPaneResult } from '../src/shared/pane-result.ts';
@@ -249,5 +252,63 @@ describe('Pane', () => {
     expect(shadow().querySelector('.message')?.textContent).toBe('<img src=x onerror=alert(1)>');
     expect(shadow().querySelector('img')).toBeNull();
     pane.close();
+  });
+});
+
+describe('walking the flow structure', () => {
+  // Trigger › Init, Condition (Yes: Scope › Inner; No: Loop › Deep), Switch (case A: Case_step), End
+  const shape = flowShape(
+    [
+      'Trigger',
+      'Init',
+      'Condition',
+      'Scope',
+      'Inner',
+      'Loop',
+      'Deep',
+      'Switch',
+      'Case_step',
+      'End',
+    ],
+    {
+      Scope: { parent: 'Condition', branch: 'actions' },
+      Inner: { parent: 'Scope', branch: 'actions' },
+      Loop: { parent: 'Condition', branch: 'else' },
+      Deep: { parent: 'Loop', branch: 'actions' },
+      Case_step: { parent: 'Switch', branch: 'case:A' },
+    },
+  );
+  const deep = ['Condition', 'Loop', 'Deep'];
+
+  it('tells what each designer node stands for', () => {
+    expect(placeOfNode('Inner', shape)).toEqual({ action: 'Inner' });
+    expect(placeOfNode('Loop-#scope', shape)).toEqual({ action: 'Loop' });
+    expect(placeOfNode('Condition-elseActions-#subgraph', shape)).toEqual({
+      parent: 'Condition',
+      branch: 'else',
+    });
+    expect(placeOfNode('Condition-actions', shape)).toEqual({
+      parent: 'Condition',
+      branch: 'actions',
+    });
+    expect(placeOfNode('A-#subgraph', shape)).toEqual({ parent: 'Switch', branch: 'case:A' });
+    expect(placeOfNode('Switch-defaultCase-#subgraph', shape)).toEqual({
+      parent: 'Switch',
+      branch: 'default',
+    });
+    expect(placeOfNode('Unknown', shape)).toBeUndefined();
+  });
+
+  it('finds which action in the same list holds a drawn node', () => {
+    // Top level: every node belongs to a top-level action.
+    expect(siblingAt({ action: 'Inner' }, deep, 0, shape)).toBe('Condition');
+    expect(siblingAt({ action: 'End' }, deep, 0, shape)).toBe('End');
+    // In the "No" branch: the "Yes" branch is not in the list; the branch card is its top.
+    expect(siblingAt({ action: 'Inner' }, deep, 1, shape)).toBeUndefined();
+    expect(siblingAt({ parent: 'Condition', branch: 'actions' }, deep, 1, shape)).toBeUndefined();
+    expect(siblingAt({ parent: 'Condition', branch: 'else' }, deep, 1, shape)).toBe('top');
+    expect(siblingAt({ action: 'Deep' }, deep, 1, shape)).toBe('Loop');
+    expect(siblingAt({ action: 'End' }, deep, 1, shape)).toBeUndefined();
+    expect(siblingAt({ action: 'Deep' }, deep, 2, shape)).toBe('Deep');
   });
 });

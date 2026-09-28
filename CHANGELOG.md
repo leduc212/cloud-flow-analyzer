@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Jumping to an action now walks the flow's structure: it finds actions deep inside nested
+  Conditions, Scopes and loops, in either branch and far down the canvas, instead of panning
+  around and giving up. If a branch or step won't open when clicked, it stops there and
+  highlights it.
+- The release notes say which zip to download (the extension, not "Source code").
+
 ## 1.0.0 (2026-09-25)
 
 First public release.

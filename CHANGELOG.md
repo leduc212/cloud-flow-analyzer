@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 (2026-09-28)
 
 - Jumping to an action now walks the flow's structure: it finds actions deep inside nested
   Conditions, Scopes and loops, in either branch and far down the canvas, instead of panning

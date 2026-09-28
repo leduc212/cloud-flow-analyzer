@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.2 (2026-09-28)
 
 - Collapsed Condition branches now open on the way to an action. The designer's branch card is
   itself the toggle; the chevron inside it is a disabled icon, which is what was being clicked.

@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Opening a collapsed branch or step on the way to an action now presses its toggle the way a
-  mouse does (pointer and mouse down and up, then click), then tries the keyboard, instead of a
-  bare click event that some designer toggles ignore.
+- Collapsed Condition branches now open on the way to an action. The designer's branch card is
+  itself the toggle; the chevron inside it is a disabled icon, which is what was being clicked.
+  Toggles are also pressed the way a mouse does (down, up, then click), then with Enter.
 - When a toggle still won't open, the designer check lists what was tried and how the card is
   built, to help find out why.
 

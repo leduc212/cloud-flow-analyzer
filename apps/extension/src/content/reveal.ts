@@ -267,11 +267,27 @@ const TOGGLE_SELECTORS = [
   '.msla-collapse-toggle',
   '[class*="collapse-toggle"]',
   'button[aria-expanded]',
+  // Branch cards: the whole card is the toggle; the chevron inside is a disabled icon.
+  '[role="button"][aria-expanded]',
   'button[aria-label*="expand" i]',
   'button[aria-label*="collapse" i]',
   'button[title*="expand" i]',
   'button[title*="collapse" i]',
 ];
+
+/**
+ * Whether pressing the element can do anything: not disabled, and not decoration hidden
+ * from assistive tech inside the card (the designer's branch chevrons are both).
+ */
+function usable(toggle: HTMLElement, card: HTMLElement): boolean {
+  if ((toggle as HTMLButtonElement).disabled || toggle.getAttribute('aria-disabled') === 'true') {
+    return false;
+  }
+  for (let el: HTMLElement | null = toggle; el && el !== card; el = el.parentElement) {
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+  }
+  return true;
+}
 
 /** The card that holds a container's expand/collapse button (scope header first). */
 function containerCard(name: string, documents = searchDocuments()): HTMLElement | undefined {
@@ -285,8 +301,9 @@ function containerCard(name: string, documents = searchDocuments()): HTMLElement
 
 export function findCollapseToggle(card: HTMLElement): HTMLElement | undefined {
   for (const selector of TOGGLE_SELECTORS) {
-    const toggle = card.querySelector<HTMLElement>(selector);
-    if (toggle) return toggle;
+    for (const toggle of card.querySelectorAll<HTMLElement>(selector)) {
+      if (usable(toggle, card)) return toggle;
+    }
   }
   return undefined;
 }

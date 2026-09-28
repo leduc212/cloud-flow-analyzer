@@ -97,8 +97,6 @@ export function flowDesignerPage(
   options: {
     /** Toggles that do nothing when pressed. */
     stuck?: string[];
-    /** The event toggles act on: a bare element.click() only sends `click`. */
-    toggleOn?: 'click' | 'pointerdown';
   } = {},
 ): string {
   return `<!doctype html><html><head><style>
@@ -116,7 +114,6 @@ body{margin:0;font-family:sans-serif} .top{height:48px;background:#0f6cbd;color:
   const flow = ${JSON.stringify(definition)};
   const collapsed = new Set(${JSON.stringify(collapsed)});
   const stuck = new Set(${JSON.stringify(options.stuck ?? [])});
-  const toggleOn = ${JSON.stringify(options.toggleOn ?? 'click')};
   const W = 240, H = 44, GAP = 50, CARD_W = 120, CARD_H = 32, PAD = 30, BGAP = 60;
   const vp = document.querySelector('.react-flow__viewport');
   const canvas = document.querySelector('.react-flow');
@@ -211,18 +208,39 @@ body{margin:0;font-family:sans-serif} .top{height:48px;background:#0f6cbd;color:
       el.dataset.id = n.id;
       Object.assign(el.style, { left: n.x + 'px', top: n.y + 'px', width: n.w + 'px', height: n.h + 'px' });
       if (n.toggle) {
-        const t = document.createElement('button');
         const shut = collapsed.has(n.toggle);
-        t.setAttribute('aria-expanded', String(!shut));
-        t.setAttribute('aria-label', (shut ? 'Expand' : 'Collapse') + (n.card ? '' : ' ' + n.text.replace(/_/g, ' ')));
-        t.textContent = shut ? '+' : '-';
-        t.addEventListener(toggleOn, () => {
+        const flip = () => {
           window.toggleClicks++;
           if (stuck.has(n.toggle)) return;
           if (shut) collapsed.delete(n.toggle); else collapsed.add(n.toggle);
           setTimeout(render, 100);
-        });
-        el.append(t);
+        };
+        const chevron = document.createElement('button');
+        chevron.setAttribute('aria-expanded', String(!shut));
+        chevron.textContent = shut ? '+' : '-';
+        if (n.card) {
+          // Like the designer's branch cards: the card is the toggle, and the chevron inside
+          // is a disabled icon hidden from assistive tech.
+          const t = document.createElement('div');
+          t.setAttribute('role', 'button');
+          t.tabIndex = 0;
+          t.setAttribute('aria-label', n.toggle.endsWith('-elseActions') ? 'False condition' : 'True condition');
+          t.setAttribute('aria-expanded', String(!shut));
+          chevron.setAttribute('aria-label', shut ? 'Expand' : 'Collapse');
+          chevron.disabled = true;
+          chevron.tabIndex = -1;
+          const icon = document.createElement('span');
+          icon.setAttribute('aria-hidden', 'true');
+          icon.append(chevron);
+          t.append(n.text.replace(/_/g, ' '), icon);
+          t.addEventListener('click', flip);
+          el.append(t);
+          vp.append(el);
+          continue;
+        }
+        chevron.setAttribute('aria-label', (shut ? 'Expand ' : 'Collapse ') + n.text.replace(/_/g, ' '));
+        chevron.addEventListener('click', flip);
+        el.append(chevron);
       }
       if (n.text) el.append(n.text.replace(/_/g, ' '));
       vp.append(el);

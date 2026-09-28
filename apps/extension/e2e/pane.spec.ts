@@ -142,11 +142,8 @@ test('walks nested branches to actions far away and in a collapsed "No" branch',
   analyse,
 }) => {
   await mockApi({ [`/flows/${FLOW}`]: poFlow });
-  // Toggles that act on pointerdown, not on a bare click event.
   const portal = await openPortal(
-    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN, {
-      toggleOn: 'pointerdown',
-    }),
+    flowDesignerPage(poFlow.properties.definition, poCollapsed, TOKEN),
   );
   await analyse(portal);
   await expect(portal.locator('#cfa-pane-host .finding').first()).toBeVisible({ timeout: 15_000 });
@@ -210,7 +207,7 @@ test('stops at a branch that will not open and points at it', async ({
   const check = JSON.parse(await paneText(portal, 'footer details pre'));
   expect(check.toggleAttempts.at(-1)).toMatchObject({
     node: `${ELSE}-#subgraph`,
-    label: 'Expand',
+    label: 'False condition',
     // The card was pressed as it came into view, under the pane.
     hit: 'div#cfa-pane-host',
     tries: [

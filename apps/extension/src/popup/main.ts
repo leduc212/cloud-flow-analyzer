@@ -9,6 +9,8 @@ const flowHint = document.getElementById('flow-hint') as HTMLParagraphElement;
 const openCapture = document.getElementById('open-capture') as HTMLButtonElement;
 const allFlows = document.getElementById('all-flows') as HTMLButtonElement;
 const runs = document.getElementById('runs') as HTMLButtonElement;
+const thisRun = document.getElementById('this-run') as HTMLButtonElement;
+const runHint = document.getElementById('run-hint') as HTMLParagraphElement;
 
 /** Sends a message to the worker, then closes the popup (closing first can lose the message). */
 async function sendAndClose(message: BackgroundMessage): Promise<void> {
@@ -43,9 +45,17 @@ async function init(): Promise<void> {
   if (tab?.id !== undefined && ref) {
     const tabId = tab.id;
     analyse.disabled = false;
-    flowHint.textContent = ref.runName
-      ? 'Shows the findings in a pane, with the run that started this run and the child flow runs it started.'
-      : 'Shows the findings in a pane next to the designer.';
+    flowHint.textContent = 'Shows the findings in a pane next to the designer.';
+    if (ref.runName) {
+      thisRun.disabled = false;
+      runHint.textContent =
+        'Shows the run that started this run, and the child flow runs it started.';
+      thisRun.addEventListener('click', () => {
+        void sendAndClose({ type: 'cfa:show-run-tab', tabId });
+      });
+    } else {
+      runHint.textContent = "Open a run from the flow's run history to see where it came from.";
+    }
     analyse.addEventListener('click', () => {
       void sendAndClose({ type: 'cfa:analyse-tab', tabId });
     });

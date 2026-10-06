@@ -29,6 +29,7 @@ if (!window.cfaPane) {
     else if (message.type === 'cfa:runs-progress')
       pane.showRunsProgress(message.done, message.total);
     else if (message.type === 'cfa:result') void pane.showResult(message.result);
+    else if (message.type === 'cfa:show-run') pane.showRunView();
     else if (message.type === 'cfa:error') pane.showError(message.message);
     else if (message.type === 'cfa:run-links') pane.showRunLinks(message.links);
   });

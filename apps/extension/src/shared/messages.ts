@@ -5,6 +5,8 @@ import type { PaneRunLinks } from './run-links.ts';
 /** Messages to the background worker. */
 export type BackgroundMessage =
   | { type: 'cfa:analyse-tab'; tabId: number; runs?: RunSampleMode }
+  /** From the popup: show the run on a tab's page, with its parent and child runs (no analysis). */
+  | { type: 'cfa:show-run-tab'; tabId: number }
   /** From the pane. `runs`: also read the flow's runs (the latest, or the slowest of them). */
   | { type: 'cfa:analyse-sender'; runs?: RunSampleMode }
   /** From the pane: stop reading runs, and show what was read so far. */
@@ -28,6 +30,8 @@ export type ContentMessage =
   /** `runs`: only the runs are being read; keep showing the findings. */
   | { type: 'cfa:loading'; flowId: string; runs?: boolean }
   | { type: 'cfa:result'; result: PaneResult }
+  /** Show the This run view: the run on the page, its parent and child runs. */
+  | { type: 'cfa:show-run' }
   | { type: 'cfa:error'; message: string }
   /** Reading recent runs: `done` of `total` runs read. */
   | { type: 'cfa:runs-progress'; flowId: string; done: number; total: number }
@@ -40,6 +44,7 @@ export type MessageSource = 'extension-page' | 'portal-tab' | 'unknown';
 /** Who may send each message: the pane (in a portal tab) or the extension's own pages. */
 export const MESSAGE_SOURCES: Record<BackgroundMessage['type'], readonly MessageSource[]> = {
   'cfa:analyse-tab': ['extension-page'],
+  'cfa:show-run-tab': ['extension-page'],
   'cfa:analyse-sender': ['portal-tab'],
   'cfa:cancel-runs': ['portal-tab'],
   'cfa:set-limit': ['portal-tab'],

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 (2026-10-06)
+
+- **This run is its own view**, separate from the analysis: on a run's page, click the extension
+  button, then **Parent and child runs**, or switch the pane to **This run** at the top. It
+  doesn't analyse the flow; **Analysis** switches back (and analyses the flow if it hasn't been
+  yet). Analysing a flow no longer shows the run's parent and children.
+- **Parents in flows you don't own are found.** For an environment admin, the run that started a
+  child flow run is now looked for in every flow in the environment, solution flows included
+  (it only searched your own and shared flows, so it could say "None of the flows you can see
+  calls this flow"). Flows are read through the admin API when needed, and what each flow calls
+  is remembered until the browser closes. When a parent calls the child from several steps, the
+  step that was running is shown. When no parent is found, it says how many flows were searched
+  and whether an admin would see more.
+
 ## 1.1.0 (2026-10-06)
 
 - **Runs page**: all of a flow's runs on one page (from the pane's **All runs ↗**, the extension

@@ -23,6 +23,8 @@ export const HOST_ID = 'cfa-pane-host';
 const PANE_WIDTH = 400;
 
 type Severity = PaneFinding['severity'];
+/** What the pane shows: the flow's analysis, or the run on the page and its parent and children. */
+type View = 'analysis' | 'run';
 type Filter = 'all' | Severity | 'dismissed';
 
 /** Where dismissed findings are remembered: per flow, in the browser (never shared). */
@@ -89,6 +91,9 @@ export class Pane {
   private runsProgress: { done: number; total: number } | undefined;
   private urlTimer: ReturnType<typeof setInterval> | undefined;
   private dismissed = new Set<string>();
+  private view: View = 'analysis';
+  /** The page shows a run: the pane offers the This run view. */
+  private onRunPage = Boolean(parseFlowUrl(location.href)?.runName);
   /** The run on the page whose parent and child runs are shown (or being read). */
   private linksRun: string | undefined;
   private links: PaneRunLinks | undefined;
@@ -155,6 +160,7 @@ export class Pane {
   /** `runs`: only the runs are being read, so the findings stay on screen. */
   showLoading(runs = false): void {
     this.setMinimised(false);
+    this.setView('analysis');
     if (runs && this.result) {
       this.runsProgress = { done: 0, total: 0 };
       this.renderRuns();
@@ -177,11 +183,7 @@ export class Pane {
     this.setMinimised(false);
     this.result = undefined;
     this.runsProgress = undefined;
-    this.linksRun = undefined;
-    this.links = undefined;
-    this.renderHeader();
-    this.renderRunLinks();
-    this.renderRuns();
+    this.setView('analysis');
     this.list.replaceChildren(h('p', { class: 'state error' }, message));
   }
 
@@ -191,10 +193,8 @@ export class Pane {
     this.filter = 'all';
     this.dismissed = new Set();
     this.setMinimised(false);
-    this.renderHeader();
-    this.renderRuns();
+    this.setView('analysis');
     this.renderFindings();
-    this.syncRunLinks();
     this.watchUrl();
     return this.store
       .load(result.ref.flowId)
@@ -207,6 +207,14 @@ export class Pane {
       .catch(() => {
         // Dismissals are a convenience; the pane works without them.
       });
+  }
+
+  /** Shows the run on the page: the run that started it and the child flow runs it started. */
+  showRunView(): void {
+    this.setMinimised(false);
+    this.setView('run');
+    this.syncRunLinks(true);
+    this.watchUrl();
   }
 
   /** The parent and child runs the worker found, for the run on the page. */
@@ -224,6 +232,42 @@ export class Pane {
 
   isAttached(): boolean {
     return this.host.isConnected;
+  }
+
+  private setView(view: View): void {
+    this.view = view;
+    this.list.hidden = view === 'run';
+    this.renderHeader();
+    this.renderRuns();
+    this.renderRunLinks();
+  }
+
+  /** Analysis | This run, on a run's page (or while This run is shown). */
+  private viewSwitch(): HTMLElement | null {
+    if (!this.onRunPage && this.view !== 'run') return null;
+    const option = (view: View, text: string) =>
+      h(
+        'button',
+        {
+          class: 'view',
+          type: 'button',
+          'aria-pressed': String(this.view === view),
+          onclick: () => {
+            if (view === this.view) return;
+            if (view === 'run') this.showRunView();
+            else if (this.result) this.setView('analysis');
+            // Not analysed yet: the worker analyses the flow, then shows it.
+            else this.send({ type: 'cfa:analyse-sender' });
+          },
+        },
+        text,
+      );
+    return h(
+      'div',
+      { class: 'views', role: 'group', 'aria-label': 'Show' },
+      option('analysis', 'Analysis'),
+      option('run', 'This run'),
+    );
   }
 
   private setMinimised(minimised: boolean): void {
@@ -275,22 +319,34 @@ export class Pane {
       'div',
       { class: 'title-row' },
       h('strong', {}, 'Cloud Flow Analyzer'),
-      h(
-        'button',
-        {
-          class: 'icon-button',
-          type: 'button',
-          title: 'Analyse again',
-          'aria-label': 'Analyse again',
-          onclick: () =>
-            this.send({
-              type: 'cfa:analyse-sender',
-              ...(this.result?.runs ? { runs: this.result.runs.mode } : {}),
-            }),
-        },
-        '↻',
-      ),
-      result
+      this.view === 'run'
+        ? h(
+            'button',
+            {
+              class: 'icon-button',
+              type: 'button',
+              title: 'Look again',
+              'aria-label': 'Look again',
+              onclick: () => this.syncRunLinks(true),
+            },
+            '↻',
+          )
+        : h(
+            'button',
+            {
+              class: 'icon-button',
+              type: 'button',
+              title: 'Analyse again',
+              'aria-label': 'Analyse again',
+              onclick: () =>
+                this.send({
+                  type: 'cfa:analyse-sender',
+                  ...(this.result?.runs ? { runs: this.result.runs.mode } : {}),
+                }),
+            },
+            '↻',
+          ),
+      result && this.view === 'analysis'
         ? h(
             'button',
             {
@@ -326,8 +382,9 @@ export class Pane {
         '×',
       ),
     );
-    if (!result) {
-      this.header.replaceChildren(titleRow);
+    const views = this.viewSwitch();
+    if (!result || this.view === 'run') {
+      this.header.replaceChildren(titleRow, ...(views ? [views] : []));
       return;
     }
     const open = this.openFindings();
@@ -352,6 +409,7 @@ export class Pane {
       );
     this.header.replaceChildren(
       titleRow,
+      ...(views ? [views] : []),
       h('div', { class: 'flow-name' }, result.displayName),
       h(
         'div',
@@ -412,7 +470,7 @@ export class Pane {
 
   private renderRuns(): void {
     const result = this.result;
-    if (!result) {
+    if (!result || this.view === 'run') {
       this.runsBox.replaceChildren();
       this.runsBox.hidden = true;
       return;
@@ -597,26 +655,32 @@ export class Pane {
   }
 
   /**
-   * On a run's page of the flow shown, reads that run's parent and child runs (again when the
-   * user opens another run); elsewhere, hides them.
+   * In the This run view, reads the parent and child runs of the run on the page, and again when
+   * the user opens another run (of any flow).
    */
   private syncRunLinks(force = false): void {
-    const current = parseFlowUrl(location.href);
-    const shown = this.result?.ref;
-    // Another flow: the notice offers to analyse it, and the links follow.
-    if (!current || !shown || current.flowId !== shown.flowId) return;
-    if (current.runName === this.linksRun && !force) return;
-    this.linksRun = current.runName;
+    if (this.view !== 'run') return;
+    const runName = parseFlowUrl(location.href)?.runName;
+    if (runName === this.linksRun && !force) return;
+    this.linksRun = runName;
     this.links = undefined;
     this.renderRunLinks();
-    if (current.runName) this.send({ type: 'cfa:run-links' });
+    if (runName) this.send({ type: 'cfa:run-links' });
   }
 
   private renderRunLinks(): void {
     const box = this.linksBox;
-    box.hidden = this.linksRun === undefined;
-    if (box.hidden) {
-      box.replaceChildren();
+    box.hidden = this.view !== 'run';
+    if (box.hidden) return;
+    if (this.linksRun === undefined) {
+      box.replaceChildren(
+        h('h3', {}, 'This run'),
+        h(
+          'p',
+          { class: 'hint' },
+          "Open a run (from a flow's run history) to see the run that started it and the child flow runs it started.",
+        ),
+      );
       return;
     }
     const links = this.links;
@@ -962,15 +1026,22 @@ export class Pane {
     }
   }
 
-  /** The portal is a single-page app: offer to re-analyse when the user opens another flow. */
+  /**
+   * The portal is a single-page app: offer to re-analyse when the user opens another flow, and
+   * follow the user from run to run in the This run view.
+   */
   private watchUrl(): void {
     clearInterval(this.urlTimer);
     this.urlTimer = setInterval(() => {
-      this.syncRunLinks();
       const current = parseFlowUrl(location.href);
+      if (Boolean(current?.runName) !== this.onRunPage) {
+        this.onRunPage = Boolean(current?.runName);
+        this.renderHeader();
+      }
+      this.syncRunLinks();
       const shown = this.result?.ref;
       const notice = this.header.querySelector('.notice');
-      if (!current || !shown || current.flowId === shown.flowId) {
+      if (this.view === 'run' || !current || !shown || current.flowId === shown.flowId) {
         notice?.remove();
         return;
       }

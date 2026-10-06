@@ -606,3 +606,35 @@ footer details button {
   flex-wrap: wrap;
   gap: 0 8px;
 }
+
+.findings[hidden] {
+  display: none;
+}
+
+.views {
+  display: flex;
+  margin: 6px 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.view {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 12px;
+  border: 0;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.view + .view {
+  border-left: 1px solid var(--border);
+}
+
+.view[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}

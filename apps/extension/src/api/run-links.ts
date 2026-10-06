@@ -37,12 +37,25 @@ export interface RunRecord {
   triggerName?: string;
 }
 
+/** The Run a Child Flow actions of a flow, by the workflow ID of the child they call. */
+export type ChildFlowCallMap = Record<string, string[]>;
+
+/**
+ * The child flows each flow calls, keyed by environment, flow and its last change, so the flows
+ * calling this one needn't be read again for every run.
+ */
+export interface ChildFlowCallCache {
+  get(key: string): Promise<ChildFlowCallMap | undefined>;
+  set(key: string, calls: ChildFlowCallMap): Promise<void>;
+}
+
 export interface RunLinkOptions {
   /** Runs listed per child flow. */
   maxChildRuns: number;
   /** Pages of runs (50 each) read per flow when looking for runs in a chain. */
   maxPages: number;
   now?: () => number;
+  callCache?: ChildFlowCallCache;
 }
 
 export const DEFAULT_RUN_LINKS: RunLinkOptions = { maxChildRuns: 10, maxPages: 5 };
@@ -106,10 +119,18 @@ export function childFlowCalls(tree: FlowTree): { node: ActionNode; workflowId: 
   });
 }
 
-const callsChildFlows = (flow: FlowSummary) =>
-  (flow.properties?.definitionSummary?.actions ?? []).some(
-    (action) => action.type?.toLowerCase() === 'workflow',
-  );
+/**
+ * Whether a listed flow calls child flows. The default list says (`definitionSummary`); the admin
+ * list doesn't, so for its flows only the definition can tell.
+ */
+function callsChildFlows(flow: FlowSummary): boolean | undefined {
+  const actions = flow.properties?.definitionSummary?.actions;
+  if (!Array.isArray(actions)) return undefined;
+  return actions.some((action) => action.type?.toLowerCase() === 'workflow');
+}
+
+const notReadable = (error: unknown) =>
+  error instanceof ApiError && (error.status === 403 || error.status === 404);
 
 function linked(
   environment: string,
@@ -226,39 +247,92 @@ export async function fetchRunLinks(
   const tree = parseFlow(flow);
   const now = (options.now ?? Date.now)();
   const run = readRunRecord(await client.get(api.run(environment, flowName, runName), 'run'));
+  /** Listed with the admin list too, when this account may read it (environment admins). */
+  let adminListed = false;
   let flows: Promise<FlowSummary[]> | undefined;
   const listFlows = () =>
-    (flows ??= client.getAll<FlowSummary>(api.flows(environment, 'default'), 'flows', 5000, 50));
+    (flows ??= (async () => {
+      const [mine, all] = await Promise.allSettled([
+        client.getAll<FlowSummary>(api.flows(environment, 'default'), 'flows', 5000, 50),
+        client.getAll<FlowSummary>(api.flows(environment, 'admin'), 'flows (admin)', 5000, 50),
+      ]);
+      if (all.status === 'rejected' && isFatal(all.reason)) throw all.reason;
+      if (mine.status === 'rejected' && (isFatal(mine.reason) || all.status === 'rejected')) {
+        throw mine.reason;
+      }
+      adminListed = all.status === 'fulfilled';
+      // The default list's entries first: they say which actions each flow has.
+      const merged = new Map<string, FlowSummary>();
+      for (const flow of [
+        ...(mine.status === 'fulfilled' ? mine.value : []),
+        ...(all.status === 'fulfilled' ? all.value : []),
+      ]) {
+        if (!merged.has(flow.name)) merged.set(flow.name, flow);
+      }
+      return [...merged.values()];
+    })());
+
+  /** The child flows a flow calls, from its definition (read as an admin if need be). */
+  async function calledBy(summary: FlowSummary): Promise<ChildFlowCallMap> {
+    const modified = summary.properties?.lastModifiedTime;
+    const key = modified ? `${environment}/${summary.name}/${modified}` : undefined;
+    const cached = key ? await options.callCache?.get(key).catch(() => undefined) : undefined;
+    if (cached) return cached;
+    let definition: unknown;
+    try {
+      definition = await client.get(api.flow(environment, summary.name), 'flow (child flow calls)');
+    } catch (error) {
+      if (!notReadable(error)) throw error;
+      definition = await client.get(
+        api.flow(environment, summary.name, true),
+        'flow (child flow calls, admin)',
+      );
+    }
+    const calls: ChildFlowCallMap = {};
+    for (const call of childFlowCalls(parseFlow(definition))) {
+      (calls[call.workflowId] ??= []).push(call.node.name);
+    }
+    if (key) await options.callCache?.set(key, calls).catch(() => undefined);
+    return calls;
+  }
 
   async function findParent(trackingId: string): Promise<RunOrigin> {
     const unknown = (reason: string): RunOrigin => ({ kind: 'unknown', trackingId, reason });
     if (!workflowId) {
       return unknown("This flow has no workflow ID, so the flows calling it can't be looked up.");
     }
-    const candidates = (await listFlows()).filter(callsChildFlows);
+    const listed = await listFlows();
+    const candidates = listed.filter((flow) => callsChildFlows(flow) !== false);
+    const unreadable: string[] = [];
     const callers = (
       await Promise.all(
         candidates.map(async (summary) => {
           try {
-            const definition = await client.get(
-              api.flow(environment, summary.name),
-              'flow (child flow calls)',
-            );
-            const actions = childFlowCalls(parseFlow(definition))
-              .filter((call) => call.workflowId === workflowId)
-              .map((call) => call.node.name);
-            return actions.length > 0 ? [{ summary, actions }] : [];
+            const actions = (await calledBy(summary))[workflowId];
+            return actions ? [{ summary, actions }] : [];
           } catch (error) {
             if (isFatal(error)) throw error;
+            unreadable.push(summary.properties?.displayName ?? summary.name);
             return [];
           }
         }),
       )
     ).flat();
     if (callers.length === 0) {
-      return unknown(
-        "None of the flows you can see calls this flow as a child flow. It may have been called by a flow you can't see, or started by a change another run made (to a Dataverse row its trigger watches, for example).",
-      );
+      const where = adminListed ? 'in this environment' : 'you can see';
+      const searched =
+        candidates.length === 0
+          ? `None of the ${listed.length} flows ${where} calls a child flow.`
+          : `None of the ${candidates.length} flows ${where} that call child flows calls this one.`;
+      const named = unreadable.slice(0, 3).map((name) => `"${name}"`);
+      const failed =
+        unreadable.length > 0
+          ? ` ${unreadable.length === 1 ? 'One' : unreadable.length} of them couldn't be read: ${named.join(', ')}${unreadable.length > named.length ? ` and ${unreadable.length - named.length} more` : ''}.`
+          : '';
+      const why = adminListed
+        ? ' Another run may have started it by changing something its trigger watches (a Dataverse row, for example).'
+        : " It may have been called by a flow you can't see (only environment admins see every flow), or started by a change another run made (to a Dataverse row its trigger watches, for example).";
+      return unknown(`${searched}${failed}${why}`);
     }
     const childStart = time(run.startTime) ?? now;
     const window = { from: childStart - MAX_RUN_MS, to: childStart + SLACK_MS };
@@ -298,14 +372,54 @@ export async function fetchRunLinks(
     }
     return {
       kind: 'parent',
+      actions: await callingActions(best.caller.summary.name, best.run.name, best.caller.actions),
       run: linked(
         environment,
         best.caller.summary.name,
         best.caller.summary.properties?.displayName,
         best.run,
       ),
-      actions: best.caller.actions,
     };
+  }
+
+  /**
+   * Of the parent flow's actions that call this flow, the ones that were running when this run
+   * started (all of them when the parent run's actions can't tell).
+   */
+  async function callingActions(
+    parentFlow: string,
+    parentRun: string,
+    actions: string[],
+  ): Promise<string[]> {
+    if (actions.length < 2) return actions;
+    const childStart = time(run.startTime);
+    if (childStart === undefined) return actions;
+    try {
+      const records = (
+        await client.getAll<unknown>(
+          api.runActions(environment, parentFlow, parentRun),
+          'parent run actions',
+          2000,
+          20,
+        )
+      ).map(readRunAction);
+      const running = actions.filter((name) => {
+        const record = records.find((r) => r.name === name);
+        const start = time(record?.startTime);
+        const end = time(record?.endTime) ?? Infinity;
+        return (
+          record !== undefined &&
+          record.status.toLowerCase() !== 'skipped' &&
+          start !== undefined &&
+          start <= childStart + SLACK_MS &&
+          end >= childStart - SLACK_MS
+        );
+      });
+      return running.length > 0 ? running : actions;
+    } catch (error) {
+      if (isFatal(error)) throw error;
+      return actions;
+    }
   }
 
   async function findOrigin(): Promise<RunOrigin> {

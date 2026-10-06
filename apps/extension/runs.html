@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloud Flow Analyzer · Runs</title>
+    <link rel="icon" href="./icons/icon-32.png" />
+  </head>
+  <body>
+    <header>
+      <h1>Runs</h1>
+      <p id="flow" class="flow-title"></p>
+      <p id="connection" class="status"></p>
+    </header>
+    <main>
+      <div class="toolbar">
+        <label class="inline"
+          >Period
+          <select id="period">
+            <option value="1">Last 24 hours</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="28">Last 28 days</option>
+          </select></label
+        >
+        <label class="inline"
+          >Up to
+          <select id="limit">
+            <option value="500">500 runs</option>
+            <option value="1000" selected>1,000 runs</option>
+            <option value="5000">5,000 runs</option>
+            <option value="10000">10,000 runs</option>
+          </select></label
+        >
+        <button id="read" type="button" class="primary" disabled>Read runs</button>
+        <button id="stop" type="button" hidden>Stop</button>
+        <span id="status" class="status" role="status"></span>
+      </div>
+
+      <section class="filter-panel" aria-labelledby="filter-title">
+        <h2 id="filter-title">Filter</h2>
+        <div class="toolbar">
+          <label class="inline"
+            >At least
+            <input id="min" type="number" min="0" step="any" inputmode="decimal" />
+            <select id="min-unit" aria-label="Unit of At least">
+              <option value="s">s</option>
+              <option value="min" selected>min</option>
+              <option value="h">h</option>
+            </select></label
+          >
+          <label class="inline"
+            >At most
+            <input id="max" type="number" min="0" step="any" inputmode="decimal" />
+            <select id="max-unit" aria-label="Unit of At most">
+              <option value="s">s</option>
+              <option value="min" selected>min</option>
+              <option value="h">h</option>
+            </select></label
+          >
+          <div id="presets" class="filters" role="group" aria-label="Duration presets"></div>
+        </div>
+        <div class="toolbar">
+          <div id="statuses" class="filters" role="group" aria-label="Statuses"></div>
+          <label class="inline">Started from <input id="from" type="datetime-local" /></label>
+          <label class="inline">until <input id="to" type="datetime-local" /></label>
+        </div>
+      </section>
+
+      <section class="chart" aria-labelledby="chart-title">
+        <h2 id="chart-title">Run durations</h2>
+        <p id="summary" class="summary"></p>
+        <div id="histogram"></div>
+      </section>
+
+      <div class="toolbar">
+        <button id="analyse" type="button" disabled>Analyse matching runs</button>
+        <button id="csv" type="button" disabled>Download CSV</button>
+        <button id="copy" type="button" disabled>Copy as Markdown</button>
+      </div>
+      <section id="analysis" class="analysis" aria-label="Where the time goes" hidden></section>
+      <div id="table"></div>
+      <p class="hint">
+        Reads the flow's run list: start and end times and statuses, never the data inside the runs.
+        <b>Analyse matching runs</b> also reads each run's steps (timings and statuses), like
+        <b>Analyse recent runs</b> in the pane. Click a bar to show the runs at least that long.
+      </p>
+    </main>
+    <script type="module" src="./src/runs/main.ts"></script>
+  </body>
+</html>

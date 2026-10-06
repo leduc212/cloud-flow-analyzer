@@ -254,6 +254,9 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender) => {
   else if (message.type === 'cfa:open-flows') {
     const query = message.environment ? `?env=${encodeURIComponent(message.environment)}` : '';
     openExtensionPage(`flows.html${query}`).catch(fail);
+  } else if (message.type === 'cfa:open-runs') {
+    const query = `?env=${encodeURIComponent(message.environment)}&flow=${encodeURIComponent(message.flowId)}`;
+    openExtensionPage(`runs.html${query}`).catch(fail);
   } else if (message.type === 'cfa:clear-run-cache') runCache.clear().catch(fail);
   else if (message.type === 'cfa:open-flow') {
     openFlow(message.environment, message.flowName).catch(fail);

@@ -4,6 +4,7 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { designerPage } from './designer.ts';
 import { ENV, FLOW, FLOW_API, TOKEN, expect, test } from './fixtures.ts';
+import { routeRuns } from './runs-api.ts';
 
 // Accessibility checks (WCAG 2.1 A and AA) with axe on everything the extension and the
 // site show. Serious and critical problems fail the test.
@@ -73,6 +74,18 @@ test('the popup, All flows page and capture tool', async ({ context, openPortal,
 
   await page.goto(`chrome-extension://${extensionId}/capture.html`);
   await expect(page.locator('#tokens .ok').first()).toBeVisible();
+  expect(await violations(page)).toEqual([]);
+});
+
+test('the Runs page', async ({ context, openPortal, extensionId }) => {
+  await openPortal(designerPage([{ id: 'A' }], TOKEN));
+  await routeRuns(context);
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/runs.html?env=${ENV}&flow=${FLOW}`);
+  await expect(page.locator('tbody tr')).toHaveCount(6);
+  await page.fill('#min', '1');
+  await page.click('#analyse');
+  await expect(page.locator('#analysis')).toBeVisible();
   expect(await violations(page)).toEqual([]);
 });
 

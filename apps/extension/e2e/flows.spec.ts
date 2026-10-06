@@ -69,6 +69,13 @@ test('lists, analyses and opens every flow in an environment', async ({
   await page.click('#filters button:has-text("Grade C or lower")');
   await expect(page.locator('tbody tr')).toHaveCount(1);
 
+  // Runs: the flow's runs on their own page.
+  const runsPage = context.waitForEvent('page');
+  await page.locator('tbody tr').first().getByRole('button', { name: 'Runs' }).click();
+  await expect(await runsPage).toHaveURL(
+    `chrome-extension://${extensionId}/runs.html?env=${encodeURIComponent(ENV)}&flow=${FLOW}`,
+  );
+
   // Reopening the page shows the analyses at once (kept for the browser session).
   await page.reload();
   await expect(page.locator('#status')).toContainText('2 already analysed');
@@ -76,7 +83,10 @@ test('lists, analyses and opens every flow in an environment', async ({
   // Open: the flow's page in the portal, with the analysis pane.
   await mockApi({ [`/flows/${FLOW}`]: bad });
   const opened = context.waitForEvent('page');
-  await page.locator('tbody tr', { hasText: 'Sync contacts' }).locator('button').click();
+  await page
+    .locator('tbody tr', { hasText: 'Sync contacts' })
+    .getByRole('button', { name: 'Open ↗' })
+    .click();
   const portal = await opened;
   const flowPage = `https://make.powerautomate.com/environments/${ENV}/flows/${FLOW}/details`;
   await portal.waitForLoadState();

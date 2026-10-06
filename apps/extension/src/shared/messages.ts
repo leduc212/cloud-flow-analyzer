@@ -14,6 +14,8 @@ export type BackgroundMessage =
   | { type: 'cfa:open-capture' }
   /** Open the All flows page, on this environment when known. */
   | { type: 'cfa:open-flows'; environment?: string }
+  /** Open the Runs page of a flow (`flowId`: the ID in the portal URL). */
+  | { type: 'cfa:open-runs'; environment: string; flowId: string }
   /** From the All flows page: open a flow in the portal, then analyse it in the pane. */
   | { type: 'cfa:open-flow'; environment: string; flowName: string }
   /** Forget every run read so far (kept in IndexedDB). */
@@ -46,6 +48,7 @@ export const MESSAGE_SOURCES: Record<BackgroundMessage['type'], readonly Message
   'cfa:open-flow': ['extension-page'],
   'cfa:clear-run-cache': ['portal-tab', 'extension-page'],
   'cfa:run-links': ['portal-tab'],
+  'cfa:open-runs': ['portal-tab', 'extension-page'],
 };
 
 const PORTAL_URL = /^https:\/\/make\.(preview\.)?(powerautomate|powerapps)\.com\//i;

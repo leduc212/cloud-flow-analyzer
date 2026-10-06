@@ -454,6 +454,21 @@ export class Pane {
         },
         label,
       );
+    const allRuns = h(
+      'button',
+      {
+        class: 'runs-button secondary',
+        type: 'button',
+        title: 'Every run on its own page: filter by duration, status and date',
+        onclick: () =>
+          this.send({
+            type: 'cfa:open-runs',
+            environment: result.ref.environment,
+            flowId: result.ref.flowId,
+          }),
+      },
+      'All runs ↗',
+    );
     const runs = result.runs;
     if (!runs) {
       this.runsBox.replaceChildren(
@@ -465,6 +480,7 @@ export class Pane {
             { class: 'runs-actions' },
             read('recent', 'Analyse recent runs'),
             read('slowest', 'Slowest runs', false),
+            allRuns,
           ),
           h(
             'span',
@@ -484,6 +500,7 @@ export class Pane {
       { class: 'runs-actions' },
       read(runs.mode, 'Read runs again'),
       read(other[0], other[1], false),
+      allRuns,
       h(
         'button',
         {

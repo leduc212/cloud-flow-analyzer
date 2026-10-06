@@ -226,6 +226,12 @@ async function readRunLinks(tabId: number, url: string | undefined): Promise<voi
   }
 }
 
+/** Opens the pane on a tab in its This run view; the pane then asks for the run links. */
+async function showRunTab(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content.js'] });
+  await send(tabId, { type: 'cfa:show-run' });
+}
+
 const OPEN_FLOW_TIMEOUT_MS = 5 * 60_000;
 
 /**
@@ -262,6 +268,7 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender) => {
   if (!isAllowed(raw, sender, chrome.runtime.id)) return false;
   const message: BackgroundMessage = raw;
   if (message.type === 'cfa:analyse-tab') analyseTab(message.tabId, message.runs).catch(fail);
+  else if (message.type === 'cfa:show-run-tab') showRunTab(message.tabId).catch(fail);
   else if (message.type === 'cfa:analyse-sender' && sender.tab?.id !== undefined) {
     analyseTab(sender.tab.id, message.runs).catch(fail);
   } else if (message.type === 'cfa:open-capture') openExtensionPage(CAPTURE_PAGE).catch(fail);

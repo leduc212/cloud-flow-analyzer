@@ -368,7 +368,7 @@ describe('fetchRunLinks', () => {
   });
 });
 
-describe('the pane on a run page', () => {
+describe('the This run view', () => {
   const FLOW_ID = 'aaaaaaaa-1111-2222-3333-444444444444';
   const PAGE = `https://make.powerautomate.com/environments/env/flows/${FLOW_ID}`;
   const result = buildPaneResult({ environment: 'env', flowId: FLOW_ID }, analyseFlow(bad));
@@ -376,13 +376,24 @@ describe('the pane on a run page', () => {
   const text = (selector: string) => shadow().querySelector(selector)?.textContent ?? '';
   afterEach(() => jsdom.reconfigure({ url: 'about:blank' }));
 
-  it('asks for the run links, then shows the parent and the child runs', async () => {
+  const pressed = () =>
+    [...shadow().querySelectorAll<HTMLButtonElement>('.views button')].map(
+      (b) => `${b.textContent}${b.getAttribute('aria-pressed') === 'true' ? '*' : ''}`,
+    );
+  const view = (name: string) =>
+    [...shadow().querySelectorAll<HTMLButtonElement>('.views button')]
+      .find((b) => b.textContent === name)!
+      .click();
+
+  it('opens on its own, without analysing the flow, and shows the parent and child runs', () => {
     jsdom.reconfigure({ url: `${PAGE}/runs/R1` });
     const send = vi.fn();
     const pane = new Pane(send, { load: async () => [], save: async () => {} });
-    await pane.showResult(result);
-    expect(send).toHaveBeenCalledWith({ type: 'cfa:run-links' });
+    pane.showRunView();
+    expect(send.mock.calls).toEqual([[{ type: 'cfa:run-links' }]]);
     expect(text('.links')).toContain('Looking for the run that started it');
+    expect(pressed()).toEqual(['Analysis', 'This run*']);
+    expect(shadow().querySelector('.grade')).toBeNull();
 
     const links: PaneRunLinks = {
       ref: { environment: 'env', flowId: FLOW_ID, runName: 'R1' },
@@ -431,16 +442,47 @@ describe('the pane on a run page', () => {
       .querySelectorAll<HTMLButtonElement>('.links button')
       .forEach((b) => b.textContent === 'Look again' && b.click());
     expect(send).toHaveBeenCalledWith({ type: 'cfa:run-links' });
+
+    // Analysis: the worker analyses the flow first.
+    send.mockClear();
+    view('Analysis');
+    expect(send).toHaveBeenCalledWith({ type: 'cfa:analyse-sender' });
     pane.close();
   });
 
-  it('stays hidden away from run pages', async () => {
-    jsdom.reconfigure({ url: `${PAGE}/details` });
+  it('keeps the analysis free of it, behind its own button on a run page', async () => {
+    jsdom.reconfigure({ url: `${PAGE}/runs/R1` });
     const send = vi.fn();
     const pane = new Pane(send, { load: async () => [], save: async () => {} });
     await pane.showResult(result);
     expect(send).not.toHaveBeenCalled();
     expect(shadow().querySelector<HTMLElement>('.links')?.hidden).toBe(true);
+    expect(pressed()).toEqual(['Analysis*', 'This run']);
+
+    view('This run');
+    expect(send).toHaveBeenCalledWith({ type: 'cfa:run-links' });
+    expect(shadow().querySelector<HTMLElement>('.links')?.hidden).toBe(false);
+    expect(shadow().querySelector<HTMLElement>('.findings')?.hidden).toBe(true);
+    expect(shadow().querySelector('.grade')).toBeNull();
+
+    // Back to the analysis already read: nothing to ask the worker.
+    send.mockClear();
+    view('Analysis');
+    expect(send).not.toHaveBeenCalled();
+    expect(shadow().querySelector('.grade')?.textContent).toBe(result.grade);
+    expect(shadow().querySelector<HTMLElement>('.links')?.hidden).toBe(true);
+    pane.close();
+  });
+
+  it('offers no This run away from run pages, and says what to open', async () => {
+    jsdom.reconfigure({ url: `${PAGE}/details` });
+    const send = vi.fn();
+    const pane = new Pane(send, { load: async () => [], save: async () => {} });
+    await pane.showResult(result);
+    expect(shadow().querySelector('.views')).toBeNull();
+    pane.showRunView();
+    expect(send).not.toHaveBeenCalled();
+    expect(text('.links')).toContain('Open a run');
     pane.close();
   });
 });

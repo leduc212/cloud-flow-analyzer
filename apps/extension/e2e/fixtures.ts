@@ -34,6 +34,8 @@ interface Fixtures {
   mockApi: (routes: Record<string, unknown>) => Promise<void>;
   /** Asks the worker to analyse a portal tab, as the popup's button does. */
   analyse: (page: Page) => Promise<void>;
+  /** Asks the worker to show the run on a portal tab, as the popup's Parent and child runs does. */
+  showRun: (page: Page) => Promise<void>;
 }
 
 export const test = base.extend<Fixtures>({
@@ -101,18 +103,29 @@ export const test = base.extend<Fixtures>({
     });
   },
   analyse: async ({ context, extensionId }, use) => {
-    await use(async (portal) => {
-      const helper = await context.newPage();
-      await helper.goto(`chrome-extension://${extensionId}/popup.html`);
-      await helper.evaluate(async () => {
-        const [tab] = await chrome.tabs.query({ url: 'https://make.powerautomate.com/*' });
-        await chrome.runtime.sendMessage({ type: 'cfa:analyse-tab', tabId: tab?.id });
-      });
-      await helper.close();
-      await portal.bringToFront();
-    });
+    await use((portal) => sendFromPopup(context, extensionId, portal, 'cfa:analyse-tab'));
+  },
+  showRun: async ({ context, extensionId }, use) => {
+    await use((portal) => sendFromPopup(context, extensionId, portal, 'cfa:show-run-tab'));
   },
 });
+
+/** Sends a message about the portal tab from an extension page, as the popup's buttons do. */
+async function sendFromPopup(
+  context: BrowserContext,
+  extensionId: string,
+  portal: Page,
+  type: 'cfa:analyse-tab' | 'cfa:show-run-tab',
+): Promise<void> {
+  const helper = await context.newPage();
+  await helper.goto(`chrome-extension://${extensionId}/popup.html`);
+  await helper.evaluate(async (type) => {
+    const [tab] = await chrome.tabs.query({ url: 'https://make.powerautomate.com/*' });
+    await chrome.runtime.sendMessage({ type, tabId: tab?.id });
+  }, type);
+  await helper.close();
+  await portal.bringToFront();
+}
 
 async function expectTokenCaptured(worker: Worker): Promise<void> {
   for (let i = 0; i < 50; i++) {

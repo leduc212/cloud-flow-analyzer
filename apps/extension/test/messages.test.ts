@@ -31,6 +31,8 @@ describe('message senders', () => {
     expect(isAllowed({ type: 'cfa:clear-run-cache' }, page, ID)).toBe(true);
     expect(isAllowed({ type: 'cfa:run-links' }, pane, ID)).toBe(true);
     expect(isAllowed({ type: 'cfa:run-links' }, page, ID)).toBe(false);
+    expect(isAllowed({ type: 'cfa:show-run-tab', tabId: 7 }, page, ID)).toBe(true);
+    expect(isAllowed({ type: 'cfa:show-run-tab', tabId: 7 }, pane, ID)).toBe(false);
     const openRuns = { type: 'cfa:open-runs', environment: 'e', flowId: 'f' };
     expect(isAllowed(openRuns, pane, ID)).toBe(true);
     expect(isAllowed(openRuns, page, ID)).toBe(true);
@@ -54,6 +56,7 @@ describe('message senders', () => {
       'cfa:open-runs',
       'cfa:run-links',
       'cfa:set-limit',
+      'cfa:show-run-tab',
     ]);
   });
 });

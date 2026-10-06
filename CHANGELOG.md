@@ -8,11 +8,13 @@
   out; click a bar to show the runs at least that long, or pick **Slowest 5%** or **2× the median
   or more**. Each run links to the portal and shows how it compares with the median. **Analyse
   matching runs** shows where the time goes in the slowest of them; export as CSV or Markdown.
-- **This run**: on a run's page, the pane shows the run that started it (a parent flow's run and
-  the Run a Child Flow step that called it, or the run it was resubmitted from) and the child flow
-  runs it started, with status, duration and a link to each. Runs are matched by the tracking ID
-  runs in a chain share, and by time (every flow in the environment is searched for an
-  environment admin); only run lists are read, never inputs or outputs.
+- **This run**: on a run's page, **Parent and child runs** (extension button), or **This run** at
+  the top of the pane, shows the run that started it (a parent flow's run and the Run a Child Flow
+  step that called it, or the run it was resubmitted from) and the child flow runs it started,
+  with status, duration and a link to each. It's separate from the analysis and doesn't analyse
+  the flow. Runs are matched by the tracking ID runs in a chain share, and by time (every flow in
+  the environment is searched for an environment admin); only run lists are read, never inputs or
+  outputs.
 
 ## 1.0.2 (2026-09-28)
 

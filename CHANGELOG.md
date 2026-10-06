@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (2026-10-06)
 
 - **Runs page**: all of a flow's runs on one page (from the pane's **All runs ↗**, the extension
   button or the All flows page). Read the last 24 hours, 7 or 28 days of runs, then filter by

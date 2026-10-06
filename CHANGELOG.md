@@ -11,7 +11,8 @@
 - **This run**: on a run's page, the pane shows the run that started it (a parent flow's run and
   the Run a Child Flow step that called it, or the run it was resubmitted from) and the child flow
   runs it started, with status, duration and a link to each. Runs are matched by the tracking ID
-  runs in a chain share, and by time; only run lists are read, never inputs or outputs.
+  runs in a chain share, and by time (every flow in the environment is searched for an
+  environment admin); only run lists are read, never inputs or outputs.
 
 ## 1.0.2 (2026-09-28)
 

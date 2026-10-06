@@ -14,7 +14,7 @@ import { analyseFlow, parseFlow, type RunSampleMode } from '@cfa/core';
 import { NoTokenError, createApiClient } from './api/client.ts';
 import { fetchFlow } from './api/flow-lookup.ts';
 import { flowApi } from './api/flows.ts';
-import { fetchRunLinks } from './api/run-links.ts';
+import { DEFAULT_RUN_LINKS, fetchRunLinks, type ChildFlowCallCache } from './api/run-links.ts';
 import { DEFAULT_RUN_SAMPLE, fetchRunSamples, type FetchedRuns } from './api/runs.ts';
 import { friendlyError } from './shared/errors.ts';
 import { flowPageUrl, parseFlowUrl } from './shared/flow-url.ts';
@@ -184,6 +184,19 @@ async function analyseTab(tabId: number, runs?: RunSampleMode): Promise<void> {
   }
 }
 
+/** Which child flows each flow calls, until the browser closes (keyed by its last change). */
+const childFlowCallCache: ChildFlowCallCache = {
+  async get(key) {
+    const stored = (await chrome.storage.session.get(`calls:${key}`))[`calls:${key}`];
+    return typeof stored === 'object' && stored !== null
+      ? (stored as Record<string, string[]>)
+      : undefined;
+  },
+  async set(key, calls) {
+    await chrome.storage.session.set({ [`calls:${key}`]: calls });
+  },
+};
+
 /** Finds the parent and child runs of the run a portal tab shows, for the pane. */
 async function readRunLinks(tabId: number, url: string | undefined): Promise<void> {
   const ref = parseFlowUrl(url);
@@ -202,6 +215,7 @@ async function readRunLinks(tabId: number, url: string | undefined): Promise<voi
       flowName(flow, ref.flowId),
       flow,
       ref.runName,
+      { ...DEFAULT_RUN_LINKS, callCache: childFlowCallCache },
     );
     await send(tabId, { type: 'cfa:run-links', links: { ref: runRef, ...links } });
   } catch (error) {

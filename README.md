@@ -101,7 +101,8 @@ open, the grade can't be better than C.
    called it, the run it was resubmitted from, or its own trigger) and, for each child flow this
    flow calls, the runs this run started, each with its status, duration and a link to it. Open
    another run and the section follows. Runs are matched by the tracking ID every run in a chain
-   shares, and by time; only flows you can see are searched.
+   shares, and by time. Every flow in the environment is searched if you're an environment admin;
+   otherwise, the flows you own or that are shared with you.
 
 **All flows in an environment:** click the extension icon, then **All flows in this environment**.
 The page lists every flow you can see (all of them for environment admins). **Analyse all** grades

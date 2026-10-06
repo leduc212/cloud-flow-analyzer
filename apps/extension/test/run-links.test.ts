@@ -4,7 +4,13 @@ import bad from '../../../fixtures/flows/sync-contacts-bad.json' with { type: 'j
 import { analyseFlow } from '@cfa/core';
 import { createApiClient } from '../src/api/client.ts';
 import { flowApi } from '../src/api/flows.ts';
-import { fetchRunLinks, readRunRecord, startedBy } from '../src/api/run-links.ts';
+import {
+  fetchRunLinks,
+  readRunRecord,
+  startedBy,
+  type ChildFlowCallCache,
+  type ChildFlowCallMap,
+} from '../src/api/run-links.ts';
 import { HOST_ID, Pane } from '../src/content/pane.ts';
 import { flowRunUrl, parseFlowUrl } from '../src/shared/flow-url.ts';
 import { buildPaneResult } from '../src/shared/pane-result.ts';
@@ -115,7 +121,16 @@ const ACTIONS: Record<string, unknown[]> = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-function setup(filter: 'supported' | 'refused' = 'supported') {
+interface Access {
+  /** This account may list (and read) every flow, as environment admins can. */
+  admin?: boolean;
+  /** Flows left out of the default list (only the admin list has them, with no summary). */
+  adminOnly?: string[];
+  /** Flows whose definition only the admin endpoint gives. */
+  forbidden?: string[];
+}
+
+function setup(filter: 'supported' | 'refused' = 'supported', access: Access = {}) {
   const calls: string[] = [];
   const client = createApiClient({
     getToken: () => TOKEN,
@@ -128,16 +143,38 @@ function setup(filter: 'supported' | 'refused' = 'supported') {
       );
       const query = url.searchParams.get('$filter');
       calls.push(`${path}${query ? ` ${query}` : ''}`);
-      if (path === '/flows') {
+      const admin =
+        /^\/providers\/Microsoft\.ProcessSimple\/scopes\/admin\/environments\/env\/(v2\/flows|flows\/([^/]+))$/.exec(
+          path,
+        );
+      if (admin) {
+        if (!access.admin) return json({ error: { code: 'Forbidden' } }, 403);
+        if (admin[2]) return FLOWS[admin[2]] ? json(FLOWS[admin[2]]) : json({}, 404);
+        // The admin list says nothing about the flows' actions.
         return json({
           value: Object.values(FLOWS).map((f) => ({
             name: f.name,
             properties: {
               displayName: f.properties.displayName,
               workflowEntityId: f.properties.workflowEntityId,
-              definitionSummary: { actions: SUMMARY_ACTIONS[f.name] },
+              lastModifiedTime: '2026-09-01T00:00:00Z',
             },
           })),
+        });
+      }
+      if (path === '/flows') {
+        return json({
+          value: Object.values(FLOWS)
+            .filter((f) => !access.adminOnly?.includes(f.name))
+            .map((f) => ({
+              name: f.name,
+              properties: {
+                displayName: f.properties.displayName,
+                workflowEntityId: f.properties.workflowEntityId,
+                lastModifiedTime: '2026-09-01T00:00:00Z',
+                definitionSummary: { actions: SUMMARY_ACTIONS[f.name] },
+              },
+            })),
         });
       }
       const match = /^\/flows\/([^/]+)(?:\/runs(?:\/([^/]+))?(\/actions)?)?$/.exec(path);
@@ -156,18 +193,26 @@ function setup(filter: 'supported' | 'refused' = 'supported') {
           value: RUNS[name]?.filter((r) => r.properties.correlation.clientTrackingId === id),
         });
       }
+      if (access.forbidden?.includes(name)) return json({ error: { code: 'Forbidden' } }, 403);
       return json(FLOWS[name]);
     },
   });
   return { client, calls };
 }
 
-const links = (runName: string, flowName = 'parent', filter?: 'supported' | 'refused') => {
-  const { client, calls } = setup(filter);
+const links = (
+  runName: string,
+  flowName = 'parent',
+  filter?: 'supported' | 'refused',
+  access: Access = {},
+  callCache?: ChildFlowCallCache,
+) => {
+  const { client, calls } = setup(filter, access);
   const result = fetchRunLinks(client, api, 'env', flowName, FLOWS[flowName], runName, {
     maxChildRuns: 10,
     maxPages: 5,
     now: () => Date.parse(at(1000)),
+    ...(callCache ? { callCache } : {}),
   });
   return { result, calls };
 };
@@ -285,6 +330,41 @@ describe('fetchRunLinks', () => {
     expect(origin?.kind === 'unknown' && origin.reason).toMatch(
       /"Flow parent" calls this flow, but no run of it with the same tracking ID was found/,
     );
+  });
+
+  it('says what was searched, and that an admin would see every flow', async () => {
+    const { origin } = await links('C2', 'child', undefined, { adminOnly: ['parent'] }).result;
+    expect(origin?.kind === 'unknown' && origin.reason).toBe(
+      "None of the 1 flows you can see that call child flows calls this one. It may have been called by a flow you can't see (only environment admins see every flow), or started by a change another run made (to a Dataverse row its trigger watches, for example).",
+    );
+  });
+
+  it('searches the admin list too, reading flows through the admin endpoint if need be', async () => {
+    const cache = new Map<string, ChildFlowCallMap>();
+    const callCache: ChildFlowCallCache = {
+      get: async (key) => cache.get(key),
+      set: async (key, calls) => void cache.set(key, calls),
+    };
+    const access = { admin: true, adminOnly: ['parent'], forbidden: ['parent'] };
+    const first = links('C2', 'child', undefined, access, callCache);
+    expect((await first.result).origin).toMatchObject({
+      kind: 'parent',
+      actions: ['Call_child'],
+      run: { flowName: 'parent', runName: 'P1' },
+    });
+    expect(first.calls).toContain(
+      '/providers/Microsoft.ProcessSimple/scopes/admin/environments/env/flows/parent',
+    );
+    // With no summary in the admin list, every flow's definition is read once…
+    expect(cache.get('env/parent/2026-09-01T00:00:00Z')).toEqual({
+      'wf-child': ['Call_child'],
+      'wf-other': ['Call_other'],
+      'wf-hidden': ['Call_hidden'],
+    });
+    // …and not again for the next run.
+    const second = links('C1', 'child', undefined, access, callCache);
+    expect((await second.result).origin).toMatchObject({ kind: 'parent' });
+    expect(second.calls.filter((c) => /\/flows\/(parent|unrelated|other)$/.test(c))).toEqual([]);
   });
 });
 

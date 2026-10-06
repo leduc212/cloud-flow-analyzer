@@ -42,7 +42,9 @@ async function init(): Promise<void> {
   if (tab?.id !== undefined && ref) {
     const tabId = tab.id;
     analyse.disabled = false;
-    flowHint.textContent = 'Shows the findings in a pane next to the designer.';
+    flowHint.textContent = ref.runName
+      ? 'Shows the findings in a pane, with the run that started this run and the child flow runs it started.'
+      : 'Shows the findings in a pane next to the designer.';
     analyse.addEventListener('click', () => {
       void sendAndClose({ type: 'cfa:analyse-tab', tabId });
     });

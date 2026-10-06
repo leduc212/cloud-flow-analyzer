@@ -59,7 +59,7 @@ const duration = (run: { startTime?: string; endTime?: string }) =>
   Date.parse(run.endTime ?? '') - Date.parse(run.startTime ?? '') || 0;
 
 /** Errors that stop the whole run analysis (as opposed to one missing list). */
-function isFatal(error: unknown): boolean {
+export function isFatal(error: unknown): boolean {
   if (error instanceof NoTokenError) return true;
   if (error instanceof ApiError) return error.status === 401 || error.status === 429;
   return error instanceof DOMException && error.name === 'AbortError';

@@ -96,6 +96,12 @@ open, the grade can't be better than C.
    read so far. Only timings, statuses and error codes are read, never the data inside the runs.
    They are kept in your browser so the same run isn't read twice (**Clear cached runs** removes
    them).
+8. **On a run's page** (open a run from the flow's run history), the pane also shows **This
+   run**: the run that started it (the parent flow's run and the Run a Child Flow step that
+   called it, the run it was resubmitted from, or its own trigger) and, for each child flow this
+   flow calls, the runs this run started, each with its status, duration and a link to it. Open
+   another run and the section follows. Runs are matched by the tracking ID every run in a chain
+   shares, and by time; only flows you can see are searched.
 
 **All flows in an environment:** click the extension icon, then **All flows in this environment**.
 The page lists every flow you can see (all of them for environment admins). **Analyse all** grades

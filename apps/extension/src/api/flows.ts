@@ -33,7 +33,11 @@ export interface FlowSummary {
     createdTime?: string;
     lastModifiedTime?: string;
     workflowEntityId?: string;
-    definitionSummary?: { triggers?: { type?: string; kind?: string }[] };
+    definitionSummary?: {
+      triggers?: { type?: string; kind?: string }[];
+      /** One entry per action; `Workflow` for Run a Child Flow. */
+      actions?: { type?: string }[];
+    };
   };
 }
 
@@ -78,8 +82,11 @@ export function flowApi(origin: string) {
       }
       return `${flow(environment, flowName)}?${version}`;
     },
-    runs: (environment: string, flowName: string, top: number) =>
-      `${flow(environment, flowName)}/runs?${version}&$top=${top}`,
+    /** Newest first. `filter`: an OData filter, e.g. `ClientTrackingId eq '…'`. */
+    runs: (environment: string, flowName: string, top: number, filter?: string) =>
+      `${flow(environment, flowName)}/runs?${version}&$top=${top}${filter ? `&$filter=${e(filter)}` : ''}`,
+    run: (environment: string, flowName: string, runName: string) =>
+      `${run(environment, flowName, runName)}?${version}`,
     runActions: (environment: string, flowName: string, runName: string) =>
       `${run(environment, flowName, runName)}/actions?${version}`,
     repetitions: (environment: string, flowName: string, runName: string, actionName: string) =>

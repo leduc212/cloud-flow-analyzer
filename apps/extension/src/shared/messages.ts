@@ -1,5 +1,6 @@
 import type { RunSampleMode } from '@cfa/core';
 import type { PaneResult } from './pane-result.ts';
+import type { PaneRunLinks } from './run-links.ts';
 
 /** Messages to the background worker. */
 export type BackgroundMessage =
@@ -16,7 +17,9 @@ export type BackgroundMessage =
   /** From the All flows page: open a flow in the portal, then analyse it in the pane. */
   | { type: 'cfa:open-flow'; environment: string; flowName: string }
   /** Forget every run read so far (kept in IndexedDB). */
-  | { type: 'cfa:clear-run-cache' };
+  | { type: 'cfa:clear-run-cache' }
+  /** From the pane, on a run's page: find the run that started it and the child runs it started. */
+  | { type: 'cfa:run-links' };
 
 /** Messages to the content script in a portal tab. */
 export type ContentMessage =
@@ -25,7 +28,9 @@ export type ContentMessage =
   | { type: 'cfa:result'; result: PaneResult }
   | { type: 'cfa:error'; message: string }
   /** Reading recent runs: `done` of `total` runs read. */
-  | { type: 'cfa:runs-progress'; flowId: string; done: number; total: number };
+  | { type: 'cfa:runs-progress'; flowId: string; done: number; total: number }
+  /** The parent and child runs of the run on the page. */
+  | { type: 'cfa:run-links'; links: PaneRunLinks };
 
 /** Where a message to the worker came from. */
 export type MessageSource = 'extension-page' | 'portal-tab' | 'unknown';
@@ -40,6 +45,7 @@ export const MESSAGE_SOURCES: Record<BackgroundMessage['type'], readonly Message
   'cfa:open-flows': ['extension-page'],
   'cfa:open-flow': ['extension-page'],
   'cfa:clear-run-cache': ['portal-tab', 'extension-page'],
+  'cfa:run-links': ['portal-tab'],
 };
 
 const PORTAL_URL = /^https:\/\/make\.(preview\.)?(powerautomate|powerapps)\.com\//i;

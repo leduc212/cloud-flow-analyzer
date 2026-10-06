@@ -8,11 +8,13 @@
 // It also runs the analysis for the in-page pane: the popup (or the pane's Re-analyse button)
 // asks for a tab to be analysed; the worker injects the pane, fetches the flow with the captured
 // token, analyses it and sends the result to the pane. The page never sees the token. When the
-// pane asks for it, the worker also reads the flow's recent runs (cached in IndexedDB).
+// pane asks for it, the worker also reads the flow's recent runs (cached in IndexedDB), and on a
+// run's page, the run that started it and the child flow runs it started.
 import { analyseFlow, parseFlow, type RunSampleMode } from '@cfa/core';
 import { NoTokenError, createApiClient } from './api/client.ts';
 import { fetchFlow } from './api/flow-lookup.ts';
 import { flowApi } from './api/flows.ts';
+import { fetchRunLinks } from './api/run-links.ts';
 import { DEFAULT_RUN_SAMPLE, fetchRunSamples, type FetchedRuns } from './api/runs.ts';
 import { friendlyError } from './shared/errors.ts';
 import { flowPageUrl, parseFlowUrl } from './shared/flow-url.ts';
@@ -182,6 +184,34 @@ async function analyseTab(tabId: number, runs?: RunSampleMode): Promise<void> {
   }
 }
 
+/** Finds the parent and child runs of the run a portal tab shows, for the pane. */
+async function readRunLinks(tabId: number, url: string | undefined): Promise<void> {
+  const ref = parseFlowUrl(url);
+  if (!ref?.runName) return;
+  const runRef = { ...ref, runName: ref.runName };
+  try {
+    const tokens = await loadTokens();
+    const origin = tokens.flow?.origins[0];
+    if (!origin) throw new NoTokenError('flow');
+    const client = createApiClient({ getToken: (kind) => tokens[kind] });
+    const flow = await fetchFlow(client, tokens, ref);
+    const links = await fetchRunLinks(
+      client,
+      flowApi(origin),
+      ref.environment,
+      flowName(flow, ref.flowId),
+      flow,
+      ref.runName,
+    );
+    await send(tabId, { type: 'cfa:run-links', links: { ref: runRef, ...links } });
+  } catch (error) {
+    await send(tabId, {
+      type: 'cfa:run-links',
+      links: { ref: runRef, children: [], error: friendlyError(error) },
+    });
+  }
+}
+
 const OPEN_FLOW_TIMEOUT_MS = 5 * 60_000;
 
 /**
@@ -227,6 +257,8 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender) => {
   } else if (message.type === 'cfa:clear-run-cache') runCache.clear().catch(fail);
   else if (message.type === 'cfa:open-flow') {
     openFlow(message.environment, message.flowName).catch(fail);
+  } else if (message.type === 'cfa:run-links' && sender.tab?.id !== undefined) {
+    readRunLinks(sender.tab.id, sender.url).catch(fail);
   } else if (message.type === 'cfa:cancel-runs' && sender.tab?.id !== undefined) {
     readingRuns.get(sender.tab.id)?.abort();
   } else if (message.type === 'cfa:set-limit' && sender.tab?.id !== undefined) {

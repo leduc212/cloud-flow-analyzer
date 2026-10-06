@@ -3,17 +3,19 @@ export interface FlowRef {
   environment: string;
   /** The ID in the URL: the flow's name, or for some solution pages its Dataverse workflow ID. */
   flowId: string;
+  /** The run shown, on a run's page (`…/runs/<run name>`). */
+  runName?: string;
 }
 
 const GUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const FLOW_PATH = new RegExp(
-  `/environments/([^/?#]+)/(?:[^?#]*/)?(?:flows|cloudflows)/(?:shared/)?(${GUID})`,
+  `/environments/([^/?#]+)/(?:[^?#]*/)?(?:flows|cloudflows)/(?:shared/)?(${GUID})(?:/runs/([0-9a-z]+)(?=[/?#]|$))?`,
   'i',
 );
 
 /**
  * Reads the flow from a maker portal URL: flow details, designer (classic or new), run history,
- * and flows opened from a solution, on make.powerautomate.com or make.powerapps.com.
+ * a run, and flows opened from a solution, on make.powerautomate.com or make.powerapps.com.
  */
 export function parseFlowUrl(url: string | undefined): FlowRef | undefined {
   if (!url) return undefined;
@@ -27,7 +29,11 @@ export function parseFlowUrl(url: string | undefined): FlowRef | undefined {
     return undefined;
   const match = FLOW_PATH.exec(parsed.pathname);
   if (!match?.[1] || !match[2]) return undefined;
-  return { environment: decodeURIComponent(match[1]), flowId: match[2].toLowerCase() };
+  return {
+    environment: decodeURIComponent(match[1]),
+    flowId: match[2].toLowerCase(),
+    ...(match[3] ? { runName: match[3] } : {}),
+  };
 }
 
 /** The environment a maker portal page belongs to (any page under `/environments/<id>/`). */
@@ -47,4 +53,9 @@ export function parseEnvironment(url: string | undefined): string | undefined {
 /** The flow's details page in the portal. */
 export function flowPageUrl(environment: string, flowName: string): string {
   return `https://make.powerautomate.com/environments/${encodeURIComponent(environment)}/flows/${encodeURIComponent(flowName)}/details`;
+}
+
+/** A run's page in the portal. */
+export function flowRunUrl(environment: string, flowName: string, runName: string): string {
+  return `https://make.powerautomate.com/environments/${encodeURIComponent(environment)}/flows/${encodeURIComponent(flowName)}/runs/${encodeURIComponent(runName)}`;
 }

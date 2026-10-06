@@ -483,8 +483,9 @@ footer details button {
 
 .runs-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
 }
 
 .runs-button.secondary {
@@ -522,4 +523,86 @@ footer details button {
 .docs {
   margin: 2px 0 0;
   padding-left: 18px;
+}
+
+.links {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.links[hidden] {
+  display: none;
+}
+
+.links h3,
+.links summary {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.links h4 {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.links p {
+  margin: 2px 0;
+}
+
+.links .hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.links ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.links li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+}
+
+.run-link {
+  color: var(--accent);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.links li .value {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.links .status-succeeded {
+  color: var(--ok);
+}
+
+.links .status-failed,
+.links .status-timedout {
+  color: var(--high);
+}
+
+.child-flow {
+  margin: 4px 0 8px;
+}
+
+.child-name {
+  font-weight: 600;
+}
+
+.child-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
 }

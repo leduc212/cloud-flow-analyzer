@@ -2,10 +2,11 @@
 // portal's styles and ours can't affect each other, and it only ever shows data the background
 // worker sends it.
 import { h } from '../shared/dom.ts';
-import { parseFlowUrl } from '../shared/flow-url.ts';
+import { flowRunUrl, parseFlowUrl } from '../shared/flow-url.ts';
 import type { BackgroundMessage } from '../shared/messages.ts';
 import type { RunSampleMode } from '@cfa/core';
 import type { PaneFinding, PaneResult, PaneRunTarget, PaneRuns } from '../shared/pane-result.ts';
+import type { LinkedRun, PaneRunLinks } from '../shared/run-links.ts';
 import styles from './pane.css?raw';
 import {
   CAPPED_NOTE,
@@ -55,6 +56,21 @@ export const LIMIT_PRESETS: [number, string][] = [
 
 const SEVERITY_LABEL: Record<Severity, string> = { high: 'HIGH', medium: 'MEDIUM', low: 'LOW' };
 
+const actionLabel = (name: string) => name.replace(/_/g, ' ');
+
+/** When a run started, in the browser's locale: "Sep 24, 11:38:06 PM". */
+function formatStart(iso: string | undefined): string {
+  const date = new Date(iso ?? '');
+  if (Number.isNaN(date.getTime())) return 'Unknown start';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 export class Pane {
   private readonly host: HTMLElement;
   private readonly root: ShadowRoot;
@@ -63,6 +79,7 @@ export class Pane {
   private readonly header: HTMLElement;
   private readonly body: HTMLElement;
   private readonly runsBox: HTMLElement;
+  private readonly linksBox: HTMLElement;
   private readonly list: HTMLElement;
   private readonly toast: HTMLElement;
   private readonly checkOutput: HTMLPreElement;
@@ -72,6 +89,9 @@ export class Pane {
   private runsProgress: { done: number; total: number } | undefined;
   private urlTimer: ReturnType<typeof setInterval> | undefined;
   private dismissed = new Set<string>();
+  /** The run on the page whose parent and child runs are shown (or being read). */
+  private linksRun: string | undefined;
+  private links: PaneRunLinks | undefined;
   private readonly send: (message: BackgroundMessage) => void;
   private readonly store: DismissalStore;
 
@@ -94,8 +114,9 @@ export class Pane {
     );
     this.header = h('header');
     this.runsBox = h('section', { class: 'runs', 'aria-label': 'Recent runs' });
+    this.linksBox = h('section', { class: 'links', 'aria-label': 'This run', hidden: true });
     this.list = h('div', { class: 'findings' });
-    this.body = h('div', { class: 'body' }, this.runsBox, this.list);
+    this.body = h('div', { class: 'body' }, this.linksBox, this.runsBox, this.list);
     this.toast = h('div', { class: 'toast', role: 'status' });
     this.checkOutput = h('pre');
     const footer = h(
@@ -156,7 +177,10 @@ export class Pane {
     this.setMinimised(false);
     this.result = undefined;
     this.runsProgress = undefined;
+    this.linksRun = undefined;
+    this.links = undefined;
     this.renderHeader();
+    this.renderRunLinks();
     this.renderRuns();
     this.list.replaceChildren(h('p', { class: 'state error' }, message));
   }
@@ -170,6 +194,7 @@ export class Pane {
     this.renderHeader();
     this.renderRuns();
     this.renderFindings();
+    this.syncRunLinks();
     this.watchUrl();
     return this.store
       .load(result.ref.flowId)
@@ -182,6 +207,14 @@ export class Pane {
       .catch(() => {
         // Dismissals are a convenience; the pane works without them.
       });
+  }
+
+  /** The parent and child runs the worker found, for the run on the page. */
+  showRunLinks(links: PaneRunLinks): void {
+    // The user has moved on to another run since asking.
+    if (links.ref.runName !== this.linksRun) return;
+    this.links = links;
+    this.renderRunLinks();
   }
 
   close(): void {
@@ -421,6 +454,21 @@ export class Pane {
         },
         label,
       );
+    const allRuns = h(
+      'button',
+      {
+        class: 'runs-button secondary',
+        type: 'button',
+        title: 'Every run on its own page: filter by duration, status and date',
+        onclick: () =>
+          this.send({
+            type: 'cfa:open-runs',
+            environment: result.ref.environment,
+            flowId: result.ref.flowId,
+          }),
+      },
+      'All runs ↗',
+    );
     const runs = result.runs;
     if (!runs) {
       this.runsBox.replaceChildren(
@@ -432,6 +480,7 @@ export class Pane {
             { class: 'runs-actions' },
             read('recent', 'Analyse recent runs'),
             read('slowest', 'Slowest runs', false),
+            allRuns,
           ),
           h(
             'span',
@@ -451,6 +500,7 @@ export class Pane {
       { class: 'runs-actions' },
       read(runs.mode, 'Read runs again'),
       read(other[0], other[1], false),
+      allRuns,
       h(
         'button',
         {
@@ -542,6 +592,168 @@ export class Pane {
         h('p', { class: 'hint' }, 'Medians per run. Findings below now use these numbers.'),
         again,
         ...reading,
+      ),
+    );
+  }
+
+  /**
+   * On a run's page of the flow shown, reads that run's parent and child runs (again when the
+   * user opens another run); elsewhere, hides them.
+   */
+  private syncRunLinks(force = false): void {
+    const current = parseFlowUrl(location.href);
+    const shown = this.result?.ref;
+    // Another flow: the notice offers to analyse it, and the links follow.
+    if (!current || !shown || current.flowId !== shown.flowId) return;
+    if (current.runName === this.linksRun && !force) return;
+    this.linksRun = current.runName;
+    this.links = undefined;
+    this.renderRunLinks();
+    if (current.runName) this.send({ type: 'cfa:run-links' });
+  }
+
+  private renderRunLinks(): void {
+    const box = this.linksBox;
+    box.hidden = this.linksRun === undefined;
+    if (box.hidden) {
+      box.replaceChildren();
+      return;
+    }
+    const links = this.links;
+    if (!links) {
+      box.replaceChildren(
+        h('h3', {}, 'This run'),
+        h(
+          'p',
+          { class: 'hint', role: 'status' },
+          'Looking for the run that started it and the child flow runs it started…',
+        ),
+      );
+      return;
+    }
+    const again = h(
+      'div',
+      { class: 'runs-actions' },
+      h(
+        'button',
+        { class: 'dismiss', type: 'button', onclick: () => this.syncRunLinks(true) },
+        'Look again',
+      ),
+    );
+    if (links.error) {
+      box.replaceChildren(
+        h('h3', {}, 'This run'),
+        h('p', { class: 'runs-error' }, links.error),
+        again,
+      );
+      return;
+    }
+    const run = links.run;
+    const title = run
+      ? `This run · ${run.status}${run.durationMs !== undefined ? ` · ${formatDuration(run.durationMs)}` : ''}`
+      : 'This run';
+    box.replaceChildren(
+      h(
+        'details',
+        { open: true },
+        h('summary', {}, title),
+        h('h4', {}, 'Started by'),
+        ...this.renderOrigin(links),
+        h('h4', {}, 'Child flow runs'),
+        ...this.renderChildren(links),
+        h(
+          'p',
+          { class: 'hint' },
+          'Matched by the tracking ID runs share and by time. Links open in a new tab.',
+        ),
+        again,
+      ),
+    );
+  }
+
+  private renderOrigin(links: PaneRunLinks): HTMLElement[] {
+    const origin = links.origin;
+    if (!origin) return [];
+    switch (origin.kind) {
+      case 'trigger':
+        return [
+          h(
+            'p',
+            { class: 'origin' },
+            origin.triggerName
+              ? `Its trigger (${actionLabel(origin.triggerName)}). No other run started it.`
+              : 'Its trigger. No other run started it.',
+          ),
+        ];
+      case 'resubmitted':
+        return [
+          h('p', { class: 'origin' }, 'Resubmitted from an earlier run:'),
+          h('ul', {}, this.runItem(origin.run, false)),
+        ];
+      case 'parent':
+        return [
+          h('ul', {}, this.runItem(origin.run, true)),
+          h(
+            'p',
+            { class: 'hint' },
+            `Called by ${origin.actions.map(actionLabel).join(' or ')} in that flow.`,
+          ),
+        ];
+      case 'unknown':
+        return [
+          h('p', { class: 'origin' }, 'Another run, which was not found.'),
+          h('p', { class: 'hint' }, origin.reason),
+          h('p', { class: 'hint' }, `Tracking ID: ${origin.trackingId}`),
+        ];
+    }
+  }
+
+  private renderChildren(links: PaneRunLinks): HTMLElement[] {
+    if (links.children.length === 0) {
+      return [h('p', { class: 'hint' }, "This flow doesn't call any child flows.")];
+    }
+    return links.children.map((child) =>
+      h(
+        'div',
+        { class: 'child-flow' },
+        h('div', { class: 'child-name' }, child.displayName),
+        h(
+          'div',
+          { class: 'child-actions' },
+          ...child.actions.map((action) => this.targetButton(action)),
+        ),
+        child.runs.length > 0
+          ? h('ul', {}, ...child.runs.map((run) => this.runItem(run, false)))
+          : null,
+        child.more > 0 ? h('p', { class: 'hint' }, `and ${child.more} more`) : null,
+        child.note ? h('p', { class: 'hint' }, child.note) : null,
+      ),
+    );
+  }
+
+  /** A run with a link to its page in the portal; `withFlow` also names its flow. */
+  private runItem(run: LinkedRun, withFlow: boolean): HTMLElement {
+    const when = formatStart(run.startTime);
+    return h(
+      'li',
+      {},
+      h(
+        'a',
+        {
+          class: 'run-link',
+          href: flowRunUrl(run.environment, run.flowName, run.runName),
+          target: '_blank',
+          rel: 'noreferrer',
+          title: `Open run ${run.runName}`,
+        },
+        withFlow ? `${run.displayName ?? run.flowName} · ${when}` : when,
+      ),
+      h(
+        'span',
+        { class: `value status-${run.status.toLowerCase()}` },
+        run.durationMs !== undefined
+          ? `${run.status} · ${formatDuration(run.durationMs)}`
+          : run.status,
       ),
     );
   }
@@ -754,6 +966,7 @@ export class Pane {
   private watchUrl(): void {
     clearInterval(this.urlTimer);
     this.urlTimer = setInterval(() => {
+      this.syncRunLinks();
       const current = parseFlowUrl(location.href);
       const shown = this.result?.ref;
       const notice = this.header.querySelector('.notice');

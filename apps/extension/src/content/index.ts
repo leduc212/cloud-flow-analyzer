@@ -20,6 +20,8 @@ if (!window.cfaPane) {
     let pane = window.cfaPane;
     if (!pane) return;
     if (!pane.isAttached()) {
+      // Run links arriving after the user closed the pane: nothing to show them in.
+      if (message.type === 'cfa:run-links') return;
       // The user closed the pane earlier: start a fresh one.
       pane = window.cfaPane = new Pane(send);
     }
@@ -28,5 +30,6 @@ if (!window.cfaPane) {
       pane.showRunsProgress(message.done, message.total);
     else if (message.type === 'cfa:result') void pane.showResult(message.result);
     else if (message.type === 'cfa:error') pane.showError(message.message);
+    else if (message.type === 'cfa:run-links') pane.showRunLinks(message.links);
   });
 }

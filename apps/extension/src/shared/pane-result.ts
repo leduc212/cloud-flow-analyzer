@@ -135,7 +135,7 @@ function steps(tree: FlowTree, path: string[]): PathStep[] {
   });
 }
 
-function runTarget(tree: FlowTree, node: ActionNode): PaneRunTarget {
+export function runTarget(tree: FlowTree, node: ActionNode): PaneRunTarget {
   return {
     target: { kind: 'action', name: node.name, path: node.path },
     targetLabel: label(node.name),

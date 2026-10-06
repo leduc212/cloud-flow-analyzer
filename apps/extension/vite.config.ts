@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => ({
         capture: resolve(import.meta.dirname, 'capture.html'),
         flows: resolve(import.meta.dirname, 'flows.html'),
         popup: resolve(import.meta.dirname, 'popup.html'),
+        runs: resolve(import.meta.dirname, 'runs.html'),
       },
       output: {
         entryFileNames: '[name].js',

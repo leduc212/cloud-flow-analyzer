@@ -96,12 +96,29 @@ open, the grade can't be better than C.
    read so far. Only timings, statuses and error codes are read, never the data inside the runs.
    They are kept in your browser so the same run isn't read twice (**Clear cached runs** removes
    them).
+8. **On a run's page** (open a run from the flow's run history), the pane also shows **This
+   run**: the run that started it (the parent flow's run and the Run a Child Flow step that
+   called it, the run it was resubmitted from, or its own trigger) and, for each child flow this
+   flow calls, the runs this run started, each with its status, duration and a link to it. Open
+   another run and the section follows. Runs are matched by the tracking ID every run in a chain
+   shares, and by time; only flows you can see are searched.
 
 **All flows in an environment:** click the extension icon, then **All flows in this environment**.
 The page lists every flow you can see (all of them for environment admins). **Analyse all** grades
 each one with the definition rules; sort by grade or issues, filter to the ones that need work,
 **Copy summary** as a Markdown table, and **Open** a flow in the portal with its analysis pane.
 Results are kept until you close the browser, and an edited flow is analysed again.
+
+**All runs of a flow:** **All runs ↗** in the pane (or **Runs of this flow** from the extension
+button, or **Runs** on the All flows page) opens the flow's runs on their own page. It reads the
+run list for the last 24 hours, 7 days or 28 days (up to the number of runs you pick; **Stop**
+keeps what was read) and lets you filter by duration (**At least** / **At most**, in seconds,
+minutes or hours), status and start time. The duration chart shows how runs spread out; click a
+bar to show the runs at least that long, or use **Slowest 5%** and **2× the median or more**. Each
+run links to its page in the portal, and shows how it compares with the median. **Analyse
+matching runs** reads the slowest 20 of them (where the time goes, loop sizes, failures, and the
+findings they back up), and **Download CSV** / **Copy as Markdown** export the list. Only start
+and end times and statuses are read from the run list.
 
 If clicking an action doesn't move the designer, open **Designer check** at the bottom of the
 pane, copy it and send it to us.
@@ -121,7 +138,7 @@ the file before you share it.
 | Path                 | What it is                                                                    |
 | -------------------- | ----------------------------------------------------------------------------- |
 | `packages/core`      | Flow parser, rules, scoring and anonymiser (pure TypeScript, no browser code) |
-| `apps/extension`     | Manifest V3 extension: popup, analysis pane, All flows page, capture tool     |
+| `apps/extension`     | Manifest V3 extension: popup, pane, All flows and Runs pages, capture tool    |
 | `apps/web`           | Project site: paste-a-flow demo, rule docs, privacy policy (GitHub Pages)     |
 | `fixtures/flows`     | Sample flows used by the tests (a "before" and "after" flow, a solution flow) |
 | `scripts/analyse.ts` | Analyse a flow file or a capture file from the command line                   |

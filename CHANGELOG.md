@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Runs page**: all of a flow's runs on one page (from the pane's **All runs ↗**, the extension
+  button or the All flows page). Read the last 24 hours, 7 or 28 days of runs, then filter by
+  duration (at least / at most), status and start time. A duration chart shows how runs spread
+  out; click a bar to show the runs at least that long, or pick **Slowest 5%** or **2× the median
+  or more**. Each run links to the portal and shows how it compares with the median. **Analyse
+  matching runs** shows where the time goes in the slowest of them; export as CSV or Markdown.
+- **This run**: on a run's page, the pane shows the run that started it (a parent flow's run and
+  the Run a Child Flow step that called it, or the run it was resubmitted from) and the child flow
+  runs it started, with status, duration and a link to each. Runs are matched by the tracking ID
+  runs in a chain share, and by time; only run lists are read, never inputs or outputs.
+
 ## 1.0.2 (2026-09-28)
 
 - Collapsed Condition branches now open on the way to an action. The designer's branch card is

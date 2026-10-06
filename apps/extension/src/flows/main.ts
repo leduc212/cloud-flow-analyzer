@@ -206,6 +206,17 @@ function renderRow(row: FlowRow): HTMLTableRowElement {
         },
         'Open ↗',
       ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'open',
+          title: "The flow's runs: filter them by duration, status and date",
+          onclick: () =>
+            send({ type: 'cfa:open-runs', environment: ui.env.value, flowId: row.name }),
+        },
+        'Runs',
+      ),
     ),
   );
 }

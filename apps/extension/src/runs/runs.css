@@ -1,0 +1,244 @@
+/* The Runs page, on top of the All flows page's styles (flows.css). */
+
+h2 {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+
+h3 {
+  font-size: 13px;
+  margin: 12px 0 4px;
+  color: var(--muted);
+}
+
+.flow-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.filter-panel,
+.chart,
+.analysis {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 12px 0;
+}
+
+.analysis[hidden] {
+  display: none;
+}
+
+.filter-panel .toolbar {
+  margin: 8px 0 0;
+}
+
+input[type='number'] {
+  width: 90px;
+}
+
+.chip:disabled {
+  opacity: 0.5;
+}
+
+.summary {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The histogram: one column per duration bucket, growing from a shared baseline. */
+#histogram {
+  position: relative;
+}
+
+.bars {
+  display: flex;
+  /* Columns have a fixed height: tops line up whatever their labels' length. */
+  align-items: flex-start;
+  gap: 2px;
+  overflow-x: auto;
+  padding-top: 36px;
+}
+
+.bar-column {
+  flex: 1 0 48px;
+  max-width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.bar-slot {
+  /* The whole column is the hit target, not just the bar. */
+  width: 100%;
+  height: 120px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.bar-slot:hover,
+.bar-slot:focus-visible {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.bar-stack {
+  position: relative;
+  width: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bar {
+  display: block;
+  width: 100%;
+}
+
+.bar.top {
+  border-radius: 4px 4px 0 0;
+}
+
+.bar.match {
+  background: var(--accent);
+}
+
+.bar.rest {
+  background: color-mix(in srgb, var(--accent) 28%, var(--panel));
+}
+
+.bar-value {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bar-label {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.2;
+}
+
+.chart-tooltip {
+  position: absolute;
+  top: 0;
+  transform: translate(-50%, -100%);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+  z-index: 1;
+}
+
+.chart-tooltip[hidden] {
+  display: none;
+}
+
+/* The runs table. */
+#table {
+  overflow-x: auto;
+}
+
+.runs-table td.number {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.runs-table td:first-child {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.runs-table a.open {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.run-status.succeeded {
+  color: var(--ok);
+}
+
+.run-status.failed,
+.run-status.timedout {
+  color: var(--high);
+}
+
+.more {
+  margin-top: 8px;
+}
+
+/* Analyse matching runs. */
+.analysis-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0 24px;
+}
+
+.analysis ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.analysis li {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0;
+  font-size: 13px;
+}
+
+.analysis li .value {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis .findings li {
+  display: block;
+}
+
+@media (max-width: 600px) {
+  .bar-column {
+    flex-basis: 36px;
+  }
+
+  .bar-label {
+    font-size: 10px;
+  }
+}

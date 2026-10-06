@@ -29,6 +29,11 @@ describe('message senders', () => {
     );
     expect(isAllowed({ type: 'cfa:clear-run-cache' }, pane, ID)).toBe(true);
     expect(isAllowed({ type: 'cfa:clear-run-cache' }, page, ID)).toBe(true);
+    expect(isAllowed({ type: 'cfa:run-links' }, pane, ID)).toBe(true);
+    expect(isAllowed({ type: 'cfa:run-links' }, page, ID)).toBe(false);
+    const openRuns = { type: 'cfa:open-runs', environment: 'e', flowId: 'f' };
+    expect(isAllowed(openRuns, pane, ID)).toBe(true);
+    expect(isAllowed(openRuns, page, ID)).toBe(true);
   });
 
   it('rejects malformed and unknown messages', () => {
@@ -46,6 +51,8 @@ describe('message senders', () => {
       'cfa:open-capture',
       'cfa:open-flow',
       'cfa:open-flows',
+      'cfa:open-runs',
+      'cfa:run-links',
       'cfa:set-limit',
     ]);
   });

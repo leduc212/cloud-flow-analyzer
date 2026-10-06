@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 (2026-10-06)
+
+- **This run is its own view**, separate from the analysis: on a run's page, click the extension
+  button, then **Parent and child runs**, or switch the pane to **This run** at the top. It
+  doesn't analyse the flow; **Analysis** switches back (and analyses the flow if it hasn't been
+  yet). Analysing a flow no longer shows the run's parent and children.
+- **Parents in flows you don't own are found.** For an environment admin, the run that started a
+  child flow run is now looked for in every flow in the environment, solution flows included
+  (it only searched your own and shared flows, so it could say "None of the flows you can see
+  calls this flow"). Flows are read through the admin API when needed, and what each flow calls
+  is remembered until the browser closes. When a parent calls the child from several steps, the
+  step that was running is shown. When no parent is found, it says how many flows were searched
+  and whether an admin would see more.
+
 ## 1.1.0 (2026-10-06)
 
 - **Runs page**: all of a flow's runs on one page (from the pane's **All runs ↗**, the extension
@@ -8,13 +22,10 @@
   out; click a bar to show the runs at least that long, or pick **Slowest 5%** or **2× the median
   or more**. Each run links to the portal and shows how it compares with the median. **Analyse
   matching runs** shows where the time goes in the slowest of them; export as CSV or Markdown.
-- **This run**: on a run's page, **Parent and child runs** (extension button), or **This run** at
-  the top of the pane, shows the run that started it (a parent flow's run and the Run a Child Flow
-  step that called it, or the run it was resubmitted from) and the child flow runs it started,
-  with status, duration and a link to each. It's separate from the analysis and doesn't analyse
-  the flow. Runs are matched by the tracking ID runs in a chain share, and by time (every flow in
-  the environment is searched for an environment admin); only run lists are read, never inputs or
-  outputs.
+- **This run**: on a run's page, the pane shows the run that started it (a parent flow's run and
+  the Run a Child Flow step that called it, or the run it was resubmitted from) and the child flow
+  runs it started, with status, duration and a link to each. Runs are matched by the tracking ID
+  runs in a chain share, and by time; only run lists are read, never inputs or outputs.
 
 ## 1.0.2 (2026-09-28)
 
